@@ -200,17 +200,25 @@ class analysis:
                     pic_fullres = obj.Clone(obj.GetName()+'_fr')
                     img_fr = hist2array(pic_fullres)
 
-                    # Upper Threshold full image
+                       # Upper Threshold full image
                     img_cimax = np.where(img_fr < self.options.cimax, img_fr, 0)
                     # zs on full image
-                    img_fr_sub = ctools.pedsub(img_cimax,self.pedarr_fr)
-                    img_fr_zs  = ctools.zsfullres(img_fr_sub,self.noisearr_fr,nsigma=self.options.nsigma)
-                    img_rb_zs  = ctools.arrrebin(img_fr_zs,self.rebin)
+                    if self.options.saturation_corr:
+                        img_fr_sub = ctools.pedsub(img_cimax,self.pedarr_fr)
+                    	img_fr_satcor = ctools.satur_corr(img_fr_sub) 
+                    	img_fr_zs  = ctools.zsfullres(img_fr_satcor,self.noisearr_fr,nsigma=self.options.nsigma)
+                    	img_rb_zs  = ctools.arrrebin(img_fr_zs,self.rebin)
+                    
+                    else:
+                        img_fr_sub = ctools.pedsub(img_cimax,self.pedarr_fr)
+                    	img_fr_satcor = img_fr_sub  
+                    	img_fr_zs  = ctools.zsfullres(img_fr_satcor,self.noisearr_fr,nsigma=self.options.nsigma)
+                    	img_rb_zs  = ctools.arrrebin(img_fr_zs,self.rebin)
                     
                     # Cluster reconstruction on 2D picture
                     algo = 'DBSCAN'
                     if self.options.type in ['beam','cosmics']: algo = 'HOUGH'
-                    snprod_inputs = {'picture': img_rb_zs, 'pictureHD': img_fr_sub, 'picturezsHD': img_fr_zs, 'pictureOri': img_fr, 'name': name, 'algo': algo}
+                    snprod_inputs = {'picture': img_rb_zs, 'pictureHD': img_fr_sub, 'picturezsHD': img_fr_satcor, 'pictureOri': img_fr, 'name': name, 'algo': algo}
                     plotpy = options.jobs < 2 # for some reason on macOS this crashes in multicore
                     snprod_params = {'snake_qual': 3, 'plot2D': False, 'plotpy': False, 'plotprofiles': False}
                     snprod = SnakesProducer(snprod_inputs,snprod_params,self.options)
