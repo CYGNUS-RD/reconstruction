@@ -20,11 +20,11 @@ def reporthook(blocknum, blocksize, totalsize):
     else: # total size is unknown
         sys.stderr.write("read %d\n" % (readsofar,))
 
-def swift_download_root_file(url,run):
+def swift_download_root_file(url,run,tmppath):
     import ROOT
     import os
     from urllib.request import urlretrieve
-    tmpname = ("/tmp/histograms_Run%05d.root" % run)
+    tmpname = (tmppath + "/histograms_Run%05d.root" % run)
     urlretrieve(url, tmpname, reporthook)
     return tmpname 
 
@@ -55,9 +55,9 @@ def swift_rm_root_file(tmpname):
     os.remove(tmpname)
     print("tmp file removed")
 
-def checkfiletmp(run):
+def checkfiletmp(run,tmpname):
     import os.path
-    return os.path.isfile("/tmp/histograms_Run%05d.root" % run)
+    return os.path.isfile(tmpname + "/histograms_Run%05d.root" % run)
 
 
 def root_TH2_name(root_file):
