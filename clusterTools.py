@@ -28,6 +28,22 @@ class Cluster:
         else:
             print("WARNING: Hits with full resolution map not available. Returning 0 integral!")
             return 0
+        
+    def corr_integral(self):
+    	e = 1.60217662e-7
+        d2 = 0.015625
+    	omega = 0.00018 
+        alpha = 0.08
+        sigma0 = 3.5
+        a0 = 0.1855
+        a = a0*e/(d2*alpha*omega)
+        b = (1.- 2*a0*sigma0)
+        c = a0*sigma0*sigma0*(d2*alpha*omega)/e
+        if hasattr(self,'hits_fr'):
+            return sum([a*z*z + b*z +c for (x,y,z) in self.hits_fr])
+        else:
+            print("WARNING: Hits with full resolution map not available. Returning 0 corr_integral!")
+            return 0
 
     def getSize(self,name='long'):
         if len(self.profiles)==0:
