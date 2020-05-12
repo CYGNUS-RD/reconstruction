@@ -283,11 +283,11 @@ if __name__ == '__main__':
     
     #inputf = inputFile(options.run, options.dir, options.daq)
 
-    if sw.checkfiletmp(int(options.run)):
-        options.tmpname = "/tmp/histograms_Run%05d.root" % int(options.run)
-    else:
-        print ('Downloading file: ' + sw.swift_root_file(options.tag, int(options.run)))
-        options.tmpname = sw.swift_download_root_file(sw.swift_root_file(options.tag, int(options.run)),int(options.run))
+    if sw.checkfiletmp(int(options.run), options.tmpname):
+       options.tmpname = options.tmpname + "/histograms_Run%05d.root" % int(options.run)
+   else:
+        #print ('Downloading file: ' + sw.swift_root_file(options.tag, int(options.run)))
+        options.tmpname = sw.swift_download_root_file(sw.swift_root_file(options.tag, int(options.run)),int(options.run),options.tmpname)
     
     if options.justPedestal:
         ana = analysis(options)
