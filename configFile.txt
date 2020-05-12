@@ -18,7 +18,8 @@
 'flag_plot_noise'       : 0,
 'flag_supercluster'     : 1,
 
-'camera_mode'            : 1,
+'camera_mode'           : 1,
+'saturation_corr'       : 1,     #saturation correction pix-by-pix
 
 # Parameters of the plots
 'cmapcolor'             : 'gray',
@@ -38,6 +39,7 @@
 'daq'                   : 'midas',                 # DAQ type (btf/h5/midas)
 'type'                  : 'neutrons',              # events type (beam/cosmics/neutrons)
 'tag'                   : 'Data',                  # 'Data' for experimental data or 'MC' for Simulated data
+'tmpname'               : '/tmp',		               # place to storage tmp histograms
 
 'excImages'             : list(range(5))+[],      # To exlude some images of the analysis. Always exclude the first 5 which are messy
 'min_neighbors_average' : 3.5,                     # cut on the minimum average energy around a pixel (remove isolated macro-pixels)
