@@ -40,12 +40,8 @@ class AutoFillTreeProducer:
         self.outTree.branch('{name}_integral'.format(name=name),     'F', lenVar=sizeStr)
         # filled only for the supercluster
         if name=='sc':
-            self.outTree.branch('{name}_nslices'.format(name=name), 'F', lenVar=sizeStr)
-            self.outTree.branch('{name}_energy'.format(name=name),  'F', lenVar=sizeStr)
+            self.outTree.branch('{name}_energy'.format(name=name), 'F', lenVar=sizeStr)
             self.outTree.branch('{name}_pathlength'.format(name=name),    'F', lenVar=sizeStr)
-            self.outTree.branch('{name}_energyprof'.format(name=name),    'F', lenVar=sizeStr+'*nSlices')
-            self.outTree.branch('{name}_xprof'.format(name=name),    'F', lenVar=sizeStr+'*nSlices')
-            self.outTree.branch('{name}_yprof'.format(name=name),    'F', lenVar=sizeStr+'*nSlices')
         self.outTree.branch('{name}_length'.format(name=name),       'F', lenVar=sizeStr)
         self.outTree.branch('{name}_width'.format(name=name),        'F', lenVar=sizeStr)
         self.outTree.branch('{name}_longrms'.format(name=name),      'F', lenVar=sizeStr)
@@ -91,12 +87,8 @@ class AutoFillTreeProducer:
         self.outTree.fillBranch('{name}_integral'.format(name=name), [cl.integral() for cl in clusters])
         # filled only for the supercluster
         if name=='sc':
-            self.outTree.fillBranch('{name}_nslices'.format(name=name), [cl.nslices for cl in clusters])
             self.outTree.fillBranch('{name}_energy'.format(name=name), [cl.calibratedEnergy for cl in clusters])
             self.outTree.fillBranch('{name}_pathlength'.format(name=name),    [cl.pathlength for cl in clusters])
-            self.outTree.fillBranch('{name}_energyprof'.format(name=name),    [cl.energyprofile[i] for cl in clusters for i in range(cl.nslices)])
-            self.outTree.fillBranch('{name}_xprof'.format(name=name),         [cl.centers[i][0] for cl in clusters for i in range(cl.nslices)])
-            self.outTree.fillBranch('{name}_yprof'.format(name=name),         [cl.centers[i][1] for cl in clusters for i in range(cl.nslices)])
         self.outTree.fillBranch('{name}_length'.format(name=name),   [cl.shapes['long_width'] for cl in clusters])
         self.outTree.fillBranch('{name}_width'.format(name=name),    [cl.shapes['lat_width'] for cl in clusters])
         self.outTree.fillBranch('{name}_longrms'.format(name=name),  [cl.shapes['longrms'] for cl in clusters])

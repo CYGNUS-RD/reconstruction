@@ -138,7 +138,7 @@ class EnergyCalibrator:
         return ret
     
     def calibratedEnergy(self,hits):
-        slices,centers = self.getSlices(hits)
+        slices = self.getSlices(hits)
         integrals = [max(0.,sum([h[2] for h in sl])) for sl in slices]
         densities = [self.density(sl) for sl in slices]
 
@@ -151,9 +151,8 @@ class EnergyCalibrator:
             print ("Slices integral = " + ', '.join('{:.1f}'.format(i) for i in integrals))
             print ("Slices densities = " + ', '.join('{:.1f}'.format(i) for i in densities))
             print ("Slices calib energy = " + ', '.join('{:.1f}'.format(i) for i in calibSlicesEnergy))
-            print ("Slices centers = " + ', '.join('({:.1f},{:.1f})'.format(i[0],i[1]) for i in centers))
             print (bcolors.OKGREEN + "supercluster calibrated integral = {ene:.1f} keV".format(ene=calibEnergy) + bcolors.ENDC)
-        return calibEnergy,calibSlicesEnergy,centers
+        return calibEnergy
     
     def getSlices(self,hits):
     
@@ -167,7 +166,6 @@ class EnergyCalibrator:
         remaining_skel_points = [(point[0],point[1]) for point in  skel_points] # simpler with an array of tuples
         remaining_cluster = cluster_img
         slices = []
-        slice_centers = []
         while len(remaining_skel_points):
             p = remaining_skel_points[-1]
             clu_slice = []
@@ -185,12 +183,11 @@ class EnergyCalibrator:
                     remaining_skel_points.remove(cp)
             #remaining_skel_points = np.setdiff1d(remaining_skel_points,circlepoints)
             slices.append(clu_slice)
-            slice_centers.append((p[0],p[1]))
         #print ("slices ",slices)
         #print ("Found ",len(slices)," slices")
         # this is a better estimate of the length of a curved cluster (in pixels)
         self.length = len(skeleton)
-        return slices,slice_centers
+        return slices
 
     def clusterLength(self):
         l = -999
