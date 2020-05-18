@@ -57,7 +57,6 @@ def swift_rm_root_file(tmpname):
 
 def checkfiletmp(run,tmpname):
     import os.path
-    #print("I checked tmp file as : " + tmpname + "/histograms_Run%05d.root" % run)
     return os.path.isfile(tmpname + "/histograms_Run%05d.root" % run)
 
 
