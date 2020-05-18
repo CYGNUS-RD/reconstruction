@@ -203,7 +203,6 @@ class analysis:
                     
                     # zs on full image + saturation correction on full image
                     if self.options.saturation_corr:
-                    	#print("you are in saturation correction mode")
                     	img_fr_sub = ctools.pedsub(img_cimax,self.pedarr_fr)
                     	img_fr_satcor = ctools.satur_corr(img_fr_sub) 
                     	img_fr_zs  = ctools.zsfullres(img_fr_satcor,self.noisearr_fr,nsigma=self.options.nsigma)
@@ -211,7 +210,6 @@ class analysis:
                     
                     # skip saturation and set satcor =img_fr_sub 
                     else:
-                    	#print("you are in poor mode")
                     	img_fr_sub = ctools.pedsub(img_cimax,self.pedarr_fr)
                     	img_fr_satcor = img_fr_sub  
                     	img_fr_zs  = ctools.zsfullres(img_fr_satcor,self.noisearr_fr,nsigma=self.options.nsigma)
@@ -267,7 +265,6 @@ if __name__ == '__main__':
     parser.add_option('-j', '--jobs', dest='jobs', default=1, type='int', help='Jobs to be run in parallel (-1 uses all the cores available)')
     parser.add_option(      '--max-entries', dest='maxEntries', default=-1, type='float', help='Process only the first n entries')
     parser.add_option(      '--pdir', dest='plotDir', default='./', type='string', help='Directory where to put the plots')
-    #parser.add_option(      '--tmppath', dest='tmpname', default='/tmp', type='string', help='Directory where to keep tmp histograms')
     
     (options, args) = parser.parse_args()
     
