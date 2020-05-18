@@ -33,10 +33,10 @@ class cameraTools:
         d2 = 0.015625 # mm^2
         omega = 0.00018 #solid  angle  covered  by  thephotocamera
         alpha = 0.08 # coefficient for varied gas mixture
-        sigma0 = 2. # small variable of density of charge, we set it as limit for different fit parameters, unit of pC/mm^2
-        a0 = 0.2368
+        sigma0 = 2.5 # small variable of density of charge, we set it as limit for different fit parameters, unit of pC/mm^2
+        a0 = 0.1855 # 0.2368 
         #fit function is y=ax^2+bx+c 
-        a = a0*e/(d2*alpha*omega) # from fit of densities functions, converted to photon units
+        a = a0*e/(d2*alpha*omega) # from fit of charge densities functions, converted to photon units
         b = (1.- 2*a0*sigma0)
         c= a0*sigma0*sigma0*(d2*alpha*omega)/e
         img0 = sigma0*(d2*alpha*omega)/e  # minimal desity of photons, like sigma0 but in photon unit 
