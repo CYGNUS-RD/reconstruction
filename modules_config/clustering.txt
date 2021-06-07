@@ -2,21 +2,22 @@
 
 ## DBSCAN seeding
 'dim'                : '3D',
-'dbscan_eps'         : 5.5,
-'dbscan_minsamples'  : 17, # this is for 2D
+'dbscan_eps'         : 5.8,
+'dbscan_minsamples'  : 30, # this is for 2D
 
 ## directional clustering
-'dir_radius'         : 30,
+'dir_radius'         : 15.5,
 'dir_min_accuracy'   : 0.8, # minimum accuracy of the RANSAC to save one point of the cluster for the directional search
 'dir_minsamples'     : 50, ## N.B. this is always 2D, and it may differ from dbscan_minsamples (that can be Npix * intensity for 3D)
 'dir_thickness'      : 5.5,
 'time_threshold'     : 300, # seconds
-'max_attempts'       : 5,
+'max_attempts'       : 8,
 'isolation_radius'   : 50,
-'metric'             : 'cityblock',
+'metric'             : 'euclidean',
 'metric_params'      : None,
 'algorithm'          : 'auto',
 'leaf_size'          : 30,
 'p'                  : None,
-'n_jobs'             : None
+'n_jobs'             : None,
+'expand_noncore'     : True,
 }

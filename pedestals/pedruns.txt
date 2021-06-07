@@ -9,4 +9,5 @@
 (3933,3938) :   3938, # ORCA flash pedestals 
 (3939,3944) :   3944, # ORCA fusion pedestals 
 (3930,3932) :   2311, # white pictures for vignetting (old camera)
+(2316,2321) :   2316
 }

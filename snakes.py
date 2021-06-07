@@ -76,20 +76,16 @@ class SnakesFactory:
         ## apply vignetting (if not applied, vignette map is all ones)
         ## this is done only for energy calculation, not for clustering (would make it crazy)
         image_fr_vignetted = self.ct.vignette_corr(self.image_fr,self.vignette)
-        image_fr_zs_vignetted = self.ct.vignette_corr(self.image_fr_zs,self.vignette)
-                
+        image_fr_zs_vignetted = self.ct.vignette_corr(self.image_fr_zs,self.vignette)    
         if tip=='3D':
-            Xl = [(ix,iy) for ix,iy in points]          # Aux variable to simulate the Z-dimension
-            X1 = np.array(Xl).copy()                    # variable to keep the 2D coordinates
-            for ix,iy in points:                        # Looping over the non-empty coordinates
-                nreplicas = int(self.image[ix,iy])-1
-                for count in range(nreplicas):                      # Looping over the number of 'photons' in that coordinate
-                    Xl.append((ix,iy))                              # add a coordinate repeatedly 
-            X = np.array(Xl)                                        # Convert the list to an array
+            sample_weight = np.take(self.image, self.image.shape[0]*points[:,0]+points[:,1]).astype(int)
+            sample_weight[sample_weight==0] = 1
+            X = points.copy()
+
+            
         else:
             X = points.copy()
-            X1 = X
-        
+            sample_weight = np.full(X.shape[0], 1, dtype=np.int)
 
         # returned collections
         superclusters = []
@@ -100,7 +96,7 @@ class SnakesFactory:
 
         if self.options.debug_mode:
             if self.options.flag_dbscan_seeds:
-                clusters_seeds = DBSCAN(eps=5.5,min_samples=40).fit(X)
+                clusters_seeds = DBSCAN(eps=5.5,min_samples=40).fit(X, sample_weight = sample_weight)
                 print('[Plotting 1st iteration]')
      
                 import matplotlib.pyplot as plt            
@@ -119,20 +115,20 @@ class SnakesFactory:
      
                 for ext in ['png','pdf']:
                     plt.savefig('{pdir}/{name}_{esp}_{tip}.{ext}'.format(pdir=outname, name=self.name, esp='1st', ext=ext, tip=self.options.tip), bbox_inches='tight', pad_inches=0)
+                    
 
         # - - - - - - - - - - - - - -
         t1 = time.perf_counter()
-        ddb = DDBSCAN('modules_config/clustering.txt').fit(X)
+        ddb = DDBSCAN('modules_config/clustering.txt').fit(X, sample_weight = sample_weight)
         if self.options.debug_mode: print(f"basic clustering in {t1 - t0:0.4f} seconds")
         t2 = time.perf_counter()
         if self.options.debug_mode: print(f"ddbscan clustering in {t2 - t1:0.4f} seconds")
-        
         # Black removed and is used for noise instead.
         unique_labels = set(ddb.labels_[:,0])
 
         # Number of polynomial clusters in labels, ignoring noise if present.
         n_superclusters = len(unique_labels) - (1 if -1 in ddb.labels_[:,0] else 0)
-
+        
         for k in unique_labels:
             if k == -1:
                 break # noise: the unclustered
@@ -157,8 +153,8 @@ class SnakesFactory:
             print('[DEBUG-MODE ON]')
             print('[%s Method]' % (self.options.tip))
 
-            if self.options.flag_full_image or self.options.flag_rebin_image or self.options.flag_edges_image or self.options.flag_first_it or self.options.flag_second_it or self.options.flag_third_it or self.options.flag_all_it or self.options.flag_supercluster :
-                import matplotlib.pyplot as plt
+            #if self.options.flag_full_image or self.options.flag_rebin_image or self.options.flag_edges_image or self.options.flag_first_it or self.options.flag_second_it or self.options.flag_third_it or self.options.flag_all_it or self.options.flag_supercluster :
+            import matplotlib.pyplot as plt
 
             if self.options.flag_full_image == 1:
                 fig = plt.figure(figsize=(self.options.figsizeX, self.options.figsizeY))
@@ -192,12 +188,13 @@ class SnakesFactory:
             if self.options.flag_stats == 1:
                 print('[Statistics]')
                 print("Polynomial clusters found: %d" % n_superclusters)
+                
 
 
             if self.options.flag_polycluster == 1:
                 print('[Plotting 0th iteration]')
                 u,indices = np.unique(ddb.labels_,return_index = True)
-                clu = [X[ddb.labels_[:,0] == i] for i in range(len(set(ddb.labels_[:,0])) - (1 if -1 in ddb.labels_[:,0] else 0))]
+                clu = [X[ddb.labels_[:,0] == i] for i in np.unique(ddb.labels_[:,0]) if i != -1]
                 fig = plt.figure(figsize=(self.options.figsizeX, self.options.figsizeY))
                 plt.imshow(self.image,cmap=self.options.cmapcolor,vmin=vmin, vmax=vmax,origin='lower' )
                 plt.title("Polynomial clusters found in iteration 0")
