@@ -574,7 +574,7 @@ if __name__ == '__main__':
     patt = re.compile('\S+_(\S+).txt')
     m = patt.match(args[0])
     detector = m.group(1)
-    if run > 16798 :
+    if run > 99999999 :
         utilities.setPedestalRun_v2(options,detector)
     else:
         utilities.setPedestalRun(options,detector)
