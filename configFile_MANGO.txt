@@ -1,4 +1,7 @@
 {
+# DATA FORMAT
+'rawdata_tier' : 'root',
+
 # DETECTOR
 'geometry'  : 'Mango_full',
 
