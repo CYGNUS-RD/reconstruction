@@ -6,7 +6,7 @@
 'geometry'  : 'Mango_full',
 
 # DEBUG plots
-'debug_mode'            : 1,
+'debug_mode'            : 0,
 'ev'                    : 53,
 'nclu'                  : -1,        # -1
 
@@ -38,6 +38,7 @@
 'type'                  : 'neutrons',              # events type (beam/cosmics/neutrons)
 'tag'                   : 'DataMango',                  # 'Data' for experimental data or 'MC' for Simulated data, DataMango for MANGO data at LNGS
 'vignetteCorr'          : True,                    # apply vignetting correction (correction maps in data/ according to the geometry)
+'environment_variables' : False,                    # if True the environment variables are added to the Tree
 
 'excImages'             : [], #list(range(5))+[],      # To exlude some images of the analysis. Always exclude the first 5 which are messy (not true anymore)
 'min_neighbors_average' : 0.75,                   # cut on the minimum average energy around a pixel (remove isolated macro-pixels)
