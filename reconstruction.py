@@ -526,11 +526,12 @@ if __name__ == '__main__':
         USER = os.environ['USER']
         flag_env = 0
     except KeyError:
-        flag_env = 1
-        USER = os.environ['JUPYTERHUB_USER']
-    except:
-        flag_env = 1
-        USER = "cygnus"
+        try:
+            flag_env = 1
+            USER = os.environ['JUPYTERHUB_USER']
+        except:
+            flag_env = 1
+            USER = "cygnus"
     #tmpdir = '/mnt/ssdcache/' if os.path.exists('/mnt/ssdcache/') else '/tmp/'
     # it seems that ssdcache it is only mounted on cygno-login, not in the batch queues (neither in cygno-custom)
     tmpdir = '/tmp/'
