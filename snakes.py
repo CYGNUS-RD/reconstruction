@@ -108,7 +108,7 @@ class SnakesFactory:
 
         # clustering will crash if the vector of pixels is empty (it may happen after the zero-suppression + noise filtering)
         if len(X)==0:
-            return superclusters, lp_len, t_medianfilter, t_noisered, t_DBSCAN 
+            return superclusters, 0, t_medianfilter, t_noisered, t_DBSCAN 
 
         if self.options.debug_mode:
             if self.options.flag_dbscan_seeds:
