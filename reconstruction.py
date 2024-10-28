@@ -446,6 +446,8 @@ class analysis:
         exist_pmt = False
         exist_cam = False
         fails_count = 0
+        timestamp = -1
+        timestamp0 = 0
 
         for mevent in mf:
             if self.options.rawdata_tier == 'midas':
@@ -469,13 +471,15 @@ class analysis:
                     else:
                          exist_pmt = False
                          exist_cam = False   
+            
+            if self.options.rawdata_tier == 'midas':
+                timestamp=mevent.header.timestamp
 
             for iobj,key in enumerate(keys):
                 name=key
                 camera = False
                 pmt = False
                 #print(name)
-
 
                 if self.options.rawdata_tier == 'root':
                     if 'pic' in name:
@@ -497,6 +501,13 @@ class analysis:
 
                 elif self.options.rawdata_tier == 'midas':
                     run = int(self.options.run)
+
+                    if name == 'TIME':
+                        timestamp0 = mevent.banks[key].data[0]
+                        #print(timestamp0,timestamp)
+                    if timestamp<10000:             #10000 in seconds is 2h 46 min. This time should be larger than the run duration
+                        timestamp = timestamp0*1000 + timestamp
+                    
                     if name.startswith('CAM'):
                         camera_read = True
                         exist_cam = True
@@ -627,7 +638,7 @@ class analysis:
                         t_DBSCAN_2 = time.perf_counter()
                         if self.options.debug_mode == 1:
                             print(f"1. DBSCAN run + variables calculation in {t_DBSCAN_2 - t_DBSCAN_1:0.4f} seconds")
-                        self.autotree.fillCameraVariables(img_fr_zs)
+                        self.autotree.fillCameraVariables(img_fr_zs,timestamp)
                         t_DBSCAN_3 = time.perf_counter()
                         if self.options.debug_mode == 1:
                             print(f"fillCameraVariables in {t_DBSCAN_3 - t_DBSCAN_2:0.4f} seconds")
@@ -881,18 +892,18 @@ if __name__ == '__main__':
             postfix = 'mid.gz'
         options.tmpname = "%s/%s%05d.%s" % (tmpdir,prefix,int(options.run),postfix)
     else:
-        if options.rawdata_tier == 'root': 
+        if options.rawdata_tier == 'root':
             file_url = sw.swift_root_file(options.tag, int(options.run))
             print ('Downloading file: ' + file_url)
             options.tmpname = sw.swift_download_root_file(file_url,int(options.run),tmpdir)
         if options.rawdata_tier == 'h5':
-            options.tmpname = ("%s/histograms_Run%05d.h5" % (tmpdir,int(options.run))) 
+            options.tmpname = ("%s/histograms_Run%05d.h5" % (tmpdir,int(options.run)))
         else:
             print ('Downloading MIDAS.gz file for run ' + options.run)
     # in case of MIDAS, download function checks the existence and in case it is absent, downloads it. If present, opens it
     if options.rawdata_tier == 'midas':
         ## need to open it (and create the midas object) in the function, otherwise the async run when multithreaded will confuse events in the two threads
-        options.tmpname = [int(options.run),tmpdir,options.tag]		#This line needs to be corrected if MC data will be in midas format. Not foreseen at all
+        options.tmpname = [int(options.run),tmpdir,options.tag]         #This line needs to be corrected if MC data will be in midas format. Not foreseen at all
     if options.justPedestal:
         ana = analysis(options)
         print("Pedestals done. Exiting.")
