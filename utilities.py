@@ -351,13 +351,10 @@ class utils:
                
            setattr(options,'pedfile_fullres_name', 'pedestals/pedmap_run%s_rebin1.root' % (options.pedrun))
         return 
-
-    def rootflip(self,rootfile,key,tag,rawdata_tier):
+    
+    def rootflip(self,rootfile,key,tag):
         #Necessary conversion from root format to numpy matrix oriented exactly as the output of midas files
-        if rawdata_tier == 'h5':
-            img_fr = rootfile[key][:].T                  #necessary because uproot inverts column and rows with x and y
-        else:
-            img_fr = rootfile[key].values().T            #necessary because uproot inverts column and rows with x and y
+        img_fr = rootfile[key].values().T            #necessary because uproot inverts column and rows with x and y
         if tag=='MAN':
             img_fr = img_fr[::-1]                  #necessary to uniform root raw data to midas. This is a vertical flip (raw data differ between ROOT and MIDAS formats)
         return img_fr
@@ -420,7 +417,7 @@ class utils:
                 dslow.loc[j_env,i] = eval(conversion.replace('x',str(dslow[i][j_env])))
             except:
                 dslow.loc[j_env,i] = -99
-                #print('Warning: no mixture density')
+                #print('Warning: no mixture density')
         
         return dslow
     
