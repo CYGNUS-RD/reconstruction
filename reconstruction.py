@@ -1,599 +1,980 @@
-#!/usr/bin/env python
-import subprocess
+import os
+cythonized=False
+for fname in os.listdir('.'):
+        if fname.endswith('.so'):
+          cythonized=True
+          break
+          
+if cythonized==False:
+          os.system('sh cythonize.sh')
+        
+from concurrent import futures
+from subprocess import Popen, PIPE
+import signal,time
 
-import os,sys,optparse,csv,resource
+import math,sys,random,re,gc
 import numpy as np
-import ROOT,math,uproot
-import swiftlib as sw
-import matplotlib.pyplot as plt            
+
+import ROOT
+ROOT.gROOT.SetBatch(True)
+import uproot
 from cameraChannel import cameraTools, cameraGeometry
+import midas.file_reader
+import h5py
 
-font = {'family': 'arial',
-        'color':  'black',
-        'weight': 'normal',
-        'size': 24,
-        }
+from snakes import SnakesProducer
+from output import OutputTree
+from treeVars import AutoFillTreeProducer
+import swiftlib as sw
+import cygno as cy
 
-class utils:
-    def __init__(self):
-        pass
+import pandas as pd
 
-    def dynamicProfileBins(self,hits,coord='x',relError=0.1):
-        minPixels = max(1,1/relError/relError)
-        index = 0 if coord=='x' else 1
-        xmin=min([h[index] for h in hits])
-        xmax=max([h[index] for h in hits])
-        x=int(xmin)
-        xedges=[x]
-        integral=0
-        while x<xmax:
-            if integral<minPixels:
-                integral += sum([int(h[index])==int(x) for h in hits])
-            else:
-                xedges.append(x)
-                integral=0
-            x+=1
-        xedges.append(int(xmax))
-        return xedges
+import utilities
+utilities = utilities.utils()
 
+from waveform import PMTreco
 
-    def dynamicProfileBins_v2(self,hits,coord='x',relError=0.1):
-        import numpy as np
-        hits = np.array(hits)
+class analysis:
 
-        minPixels = max(1,1/relError/relError)
-        index = 0 if coord=='x' else 1
-        h = hits.T[index].astype(int)
-        xmin=min(h)
-        xmax=max(h)
-        x=xmin
-        xedges=[x]
-        integral=0
-
-        xunique, xcounts = np.unique(h,return_counts=True)
-
-        if xmin>=0:
-            xrange = list(range(0, xmax+1))
-            c = np.zeros(len(xrange),dtype = int)
-            c[xunique] = xcounts
-            c = c[xmin:-1]
-        else:
-            xrange = list(range(0, (xmax+1)-xmin))
-            c = np.zeros(len(xrange),dtype = int)
-            c[xunique-xmin] = xcounts
-
-        for ind, x in enumerate(range(xmin,xmax)):
-            if integral<minPixels:
-                integral += c[ind]
-            else:
-                xedges.append(x)
-                integral=0
-        xedges.append(xmax)
-        return xedges
-
-    def rotate_around_point(self, hit, dir, pivot, inverse=False):
-        x,y = hit[:-1]
-        ox, oy = pivot
-        cos,sin = dir
-        if inverse: cos = -1*cos
-        qx = ox + cos * (x - ox) + sin * (y - oy)
-        qy = oy - sin * (x - ox) + cos * (y - oy)
-        return qx, qy
-
-    def gen_rand_limit(self, x1, x2, y1, y2, maxx=2048, maxy=2048):
-        import random
-        # generate x, y O(1)
-        # --x
-        left = random.randrange(0, x1)
-        right = random.randrange(x2+1, maxx)
-        withinx = random.randrange(x1, x2+1)
-        # adjust probability of a point outside the box columns
-        # a point outside has probability (1/(maxx-w)) v.s. a point inside has 1/w
-        # the same is true for rows. adjupx/y adjust for this probability 
-        w = abs(x2-x1)
-        h = abs(y2-y1)
-        adjpx = ((maxx - w)/w/2)
-        x = random.choice([left, right] * adjpx + [withinx])
-        # --y
-        top = random.randrange(0, y1)
-        bottom = random.randrange(y2+1, maxy)
-        withiny = random.randrange(y1, y2+1)
-        if x == left or x == right:
-            adjpy = ((maxy- h)/h/2)
-            y = random.choice([top, bottom] * adjpy + [withiny])
-        else:
-            y = random.choice([top, bottom])
-        return x, y 
-
-    def get_git_revision_hash(self):
-        return subprocess.check_output(['git', 'rev-parse', 'HEAD'])
-
-    def calcVignettingMap(self,run,pedfile,outfile,maxImages=1000,rebin=12,det='lime',daq='midas'):
-
-        ################ GEOMETRY ###
-        geometryPSet   = open('modules_config/geometry_{det}.txt'.format(det=det),'r')
+    def __init__(self,options):
+        self.rebin = options.rebin        
+        self.options = options
+        if options.camera_mode:
+            self.pedfile_fullres_name = options.pedfile_fullres_name
+        self.tmpname = options.tmpname
+        geometryPSet   = open('modules_config/geometry_{det}.txt'.format(det=options.geometry),'r')
         geometryParams = eval(geometryPSet.read())
-        cg = cameraGeometry(geometryParams)
-        ctools = cameraTools(cg)
-        #############################
-        
-        # pedestal map, full reso
-        pedrf_fr = uproot.open(pedfile)
-        pedarr_fr = pedrf_fr['pedmap'].values().T
-        noisearr_fr = pedrf_fr['pedmap'].errors().T
-        
-        outname_base = os.path.basename(outfile).split('.')[0]
-        tf_out = ROOT.TFile.Open(outname_base+'.root','recreate')
+        self.cg = cameraGeometry(geometryParams)
+        self.xmax = self.cg.npixx
+        self.ymax = self.cg.npixy
 
-        Nx = cg.npixx
-        Ny = cg.npixy
-        nx=int(Nx/rebin); ny=int(Ny/rebin);
-        normmap = ROOT.TH2D('normmap_{det}'.format(det=det),'normmap',nx,0,Nx,ny,0,Ny)
-        summap = normmap.Clone('summap_{det}'.format(det=det))
+        eventContentPSet = open('modules_config/reco_eventcontent.txt')
+        self.eventContentParams = eval(eventContentPSet.read())
+        for k,v in self.eventContentParams.items():
+            setattr(self.options,k,v)
         
-        mapsum = np.zeros((nx,ny))
 
-        USER = os.environ['USER']
-        if sw.checkfiletmp(int(run),'root'):
-            infile = "/tmp/%s/histograms_Run%05d.root" % (USER,int(run))
+        if options.camera_mode:
+            if not os.path.exists(self.pedfile_fullres_name):
+                print("WARNING: pedestal file with full resolution ",self.pedfile_fullres_name, " not existing. First calculate them...")
+                self.calcPedestal(options,1)
+            if not options.justPedestal:
+                print("Pulling pedestals...")
+                # first the one for clustering with rebin
+                ctools = cameraTools(self.cg)
+                # then the full resolution one
+                pedrf_fr = uproot.open(self.pedfile_fullres_name)
+                self.pedarr_fr   = pedrf_fr['pedmap'].values().T
+                self.noisearr_fr = pedrf_fr['pedmap'].errors().T
+                if options.vignetteCorr:
+                    self.vignmap = ctools.loadVignettingMap()
+                else:
+                    self.vignmap = np.ones((self.ymax, self.xmax))
+
+        ## Dictionary with the PMT parameters found in config_file
+        self.pmt_params = {
+            'ch_to_read' : options.board_pmt_channels,             
+            'threshold': options.threshold,
+            'height_RMS': options.height_RMS, 
+            'minPeakDistance': options.minPeakDistance, 
+            'prominence': options.prominence,
+            'fixed_prom': options.fixed_prom, 
+            'width': options.width,
+            'resample': options.resample,
+            'plotpy': options.pmt_plotpy,
+            'wf_in_tree': options.pmt_wf_in_tree,
+            'pmt_verb':  options.pmt_verbose,
+            'pmt_outdir': options.plotDir,
+            'include_gem':  options.include_gem,
+            'ch_to_read_gem' : options.board_gem_channels,             
+        }
+        if options.debug_mode == 1:
+            self.pmt_params['pmt_verb']=3
+            self.pmt_params['plotpy']= True
+        if options.pmt_mode and not options.board_pmt_channels:
+            print('\nIt seems you are trying to analyse the PMT signals without selecting their channels. Untoggle PMT mode or add channels.\n ANALYSIS FAILED')
+            sys.exit()
+        if options.include_gem and not options.pmt_mode:
+            print('\nIt seems you are trying to analyse the GEM signals without the PMT Mode On. This does not work.\n ANALYSIS FAILED')
+            sys.exit()
+        if options.include_gem and not options.board_gem_channels:
+            print('\nIt seems you are trying to analyse the GEM signals without selecting their channels. Untoggle GEM mode or add channels.\n ANALYSIS FAILED')
+            sys.exit()
+
+
+    # the following is needed for multithreading
+    def __call__(self,evrange=(-1,-1,-1)):
+        if evrange[0]==-1:
+            outfname = '{outdir}/{base}'.format(base=self.options.outFile,outdir=options.outdir)
         else:
-            print ('Downloading file: ' + sw.swift_root_file('Data', int(run)))
-            infile = sw.swift_download_root_file(sw.swift_root_file('Data', int(run)),int(run))
-           
-        tf_in = sw.swift_read_root_file(infile)
+            outfname = '{outdir}/{base}_chunk{ij}.root'.format(base=self.options.outFile.split('.')[0],ij=evrange[0],outdir=self.options.outdir)
+        self.beginJob(outfname)
+        self.reconstruct(evrange)
+        self.endJob()
         
-        framesize = 216 if det=='lime' else 0
+    def beginJob(self,outfname):
+        # prepare output file
+        ROOT.EnableThreadSafety()
+        self.outputFile = ROOT.TFile.Open(outfname, "RECREATE")
+        print("Opening out file: ",outfname," self.outputFile = ",self.outputFile)
+        ROOT.gDirectory.cd()
+        # prepare output tree
+        if options.camera_mode or options.environment_variables:
+            self.outputTree = ROOT.TTree("Events","Tree containing reconstructed quantities")
+            self.outTree = OutputTree(self.outputFile,self.outputTree)
+            self.autotree = AutoFillTreeProducer(self.outTree,self.eventContentParams)
 
-        #this was a special case with 3 pictures with different orientations
-        #files = ["~/Work/data/cygnus/run03930.root","~/Work/data/cygnus/run03931.root","~/Work/data/cygnus/run03932.root"]
-        #for f in files:
-        #tf_in = ROOT.TFile(infile)
+        ## Prepare PMT waveform Tree (1 event = 1 waveform)
+        if options.pmt_mode:
+            self.outputTree_pmt = ROOT.TTree("PMT_Events","Tree containing reconstructed PMT quantities")
+            self.outTree_pmt = OutputTree(self.outputFile,self.outputTree_pmt)
+            self.autotree_pmt = AutoFillTreeProducer(self.outTree_pmt,self.eventContentParams)
+
+            ## Prepare PMT average waveform Tree (1 event = 1 averaged waveform using 4 PMTs)
+            ## Only does average if there are more than one channel
+            if len(self.options.board_pmt_channels) > 1:
+                self.outputTree_pmt_avg = ROOT.TTree("PMT_Avg_Events","Tree containing the average PMT waveforms of 4 channels")
+                self.outTree_pmt_avg = OutputTree(self.outputFile,self.outputTree_pmt_avg)
+                self.autotree_pmt_avg = AutoFillTreeProducer(self.outTree_pmt_avg,self.eventContentParams)
+
+            if options.include_gem:
+                self.outputTree_gem = ROOT.TTree("GEM_Events","Tree containing reconstructed GEM quantities")
+                self.outTree_gem = OutputTree(self.outputFile,self.outputTree_gem)
+                self.autotree_gem = AutoFillTreeProducer(self.outTree_gem,self.eventContentParams)
+
+        if self.options.camera_mode:
+            self.outTree.branch("run", "I", title="run number")
+            self.outTree.branch("event", "I", title="event number")
+            self.outTree.branch("pedestal_run", "I", title="run number used for pedestal subtraction")
+            self.autotree.createCameraVariables()
+            self.autotree.createTimeCameraVariables()
+            self.autotree.createClusterVariables('sc')
+        if self.options.save_MC_data:
+#           self.outTree.branch("MC_track_len","F")
+            self.outTree.branch("eventnumber","I")
+            self.outTree.branch("particle_type","I")
+            self.outTree.branch("energy","F")
+            self.outTree.branch("ioniz_energy","F")
+            self.outTree.branch("drift","F")
+            self.outTree.branch("phi_initial","F")
+            self.outTree.branch("theta_initial","F")
+            self.outTree.branch("MC_x_vertex","F")
+            self.outTree.branch("MC_y_vertex","F")
+            self.outTree.branch("MC_z_vertex","F")
+            self.outTree.branch("MC_x_vertex_end","F")
+            self.outTree.branch("MC_y_vertex_end","F")
+            self.outTree.branch("MC_z_vertex_end","F")
+            self.outTree.branch("MC_3D_pathlength","F")
+            self.outTree.branch("MC_2D_pathlength","F")
+            
+        if options.environment_variables: self.autotree.createEnvVariables()
+        if self.options.pmt_mode:
+            self.autotree_pmt.createPMTVariables(self.pmt_params)
+            self.autotree_pmt.createTimePMTVariables()
+
+            if len(self.options.board_pmt_channels) > 1:
+                self.autotree_pmt_avg.createPMTVariables_average(self.pmt_params)            
+                self.autotree_pmt_avg.createTimePMTVariables()
+
+            if options.include_gem:
+                self.autotree_gem.createPMTVariables(self.pmt_params)   ## We base GEM analysis on PMT, for now.
+
+
+    def endJob(self):
+        if options.camera_mode or options.environment_variables:
+            self.outTree.write()
         
-        # first calculate the mean 
-        for i,key in enumerate(tf_in.keys()):
-            iev = i if daq != 'midas'  else i/2 # when PMT is present
-            if 'pic' not in key: continue
-            if maxImages>-1 and i<len(tf_in.keys())-maxImages: continue
-            arr = tf_in[key].values()
-            print("Calc pixel sums with event: ",key)
+        if self.options.pmt_mode:
+            self.outTree_pmt.write()
+            if len(self.options.board_pmt_channels) > 1:
+                self.outTree_pmt_avg.write()            
+            if options.include_gem:
+                self.outTree_gem.write()
+        
+        self.outputFile.Close()
+        
+    def getNEvents(self,options):
+        if options.rawdata_tier == 'root':
+            tf = sw.swift_read_root_file(self.tmpname)
+            pics = [k for k in tf.keys() if 'pic' in k]
+            return len(pics)
+        elif options.rawdata_tier == 'h5':
+            tf = sw.swift_read_h5_file(self.tmpname)
+            pics = [k for k in tf.keys() if 'pic' in k]
+            print("n events:", len(pics))
+            return len(pics)
             
-            # Upper Threshold full image
-            #img_cimax = np.where(arr < 300, arr, 0)
-            img_cimax = arr
-            img_fr_sub = ctools.pedsub(img_cimax,pedarr_fr)
-            img_fr_zs  = ctools.zsfullres(img_fr_sub,noisearr_fr,nsigma=1)
-            
-            # for lime, remove the borders of the sensor
-            if det=='lime':
-                #img_fr_zs[:framesize,:]=0
-                #img_fr_zs[-framesize:,:]=0
-                img_fr_zs[:,:framesize]=0
-                img_fr_zs[:,-framesize:]=0
-                
-            img_rb_zs  = ctools.arrrebin(img_fr_zs,rebin)
-            mapsum = np.add(mapsum,img_rb_zs)
-        print (mapsum)
+        run,tmpdir,tag = self.tmpname
+        mf = sw.swift_download_midas_file(run,tmpdir,tag)     #you download the file here so that in multithread does not confuse if it downloaded or not
+        if options.offline==False:
+            df = cy.read_cygno_logbook(tag=options.tag,start_run=run-2000,end_run=run+1)
+        else:
+            runlog='runlog_%s_auto.csv' % (options.tag)
+            df = pd.read_csv('pedestals/%s'%runlog)
+        if df.run_number.isin({int(options.run)}).any():
+           dffilter = df["run_number"] == int(options.run)
+           try:
+              evs = int(df.number_of_events[dffilter].values.tolist()[0])
+              return evs
+           except ValueError:
+              print('Probably number of events line in data frame is empty. Opening and counting the file events\n')
      
-        # calc the normalized map wrt the center area
-        CA = 16
-        central_square = mapsum[int((Nx-CA)/rebin/2):int((Nx+CA)/rebin/2),int((Ny-CA)/rebin/2):int((Ny+CA)/rebin/2)]
-        print (central_square)
-        norm = np.mean(central_square)
-        print ("Now normalizing to the central area value = ",norm)
-        mapnorm = mapsum / float(norm)
-        if det=='lime':
-            framesize_rb = int(framesize/rebin)
-            #mapnorm[:framesize_rb,:]=1
-            #mapnorm[-framesize_rb:,:]=1
-            mapnorm[:,:framesize_rb]=1
-            mapnorm[:,-framesize_rb:]=1
+        evs =0
+        for mevent in mf:
+            if mevent.header.is_midas_internal_event():
+               continue
+            else:
+                keys = mevent.banks.keys()
+            for iobj,key in enumerate(keys):
+                name=key
+                if name.startswith('CAM'):
+                    evs += 1
+        return evs
+
+    def calcPedestal(self,options,alternativeRebin=-1):
+        maxImages=options.maxEntries
+        nx=self.xmax
+        ny=self.ymax
+        rebin = self.rebin if alternativeRebin<0 else alternativeRebin
+        nx=int(nx/rebin); ny=int(ny/rebin); 
+        pedfilename = 'pedestals/pedmap_run%s_rebin%d.root' % (options.pedrun,rebin)
         
-        # now save in a persistent ROOT object. Threshold to 1
+        pedfile = ROOT.TFile.Open(pedfilename,'recreate')
+        pedmap = ROOT.TH2D('pedmap','pedmap',nx,0,self.xmax,ny,0,self.ymax)
+        pedmapS = ROOT.TH2D('pedmapsigma','pedmapsigma',nx,0,self.xmax,ny,0,self.ymax)
+
+        pedsum = np.zeros((ny,nx))
+
+        if options.rawdata_tier == 'root' or options.rawdata_tier == 'h5':
+            tmpdir = '{tmpdir}'.format(tmpdir=options.tmpdir if options.tmpdir else "/tmp/")
+            if not sw.checkfiletmp(int(options.pedrun),'root',tmpdir):
+                print ('Downloading file: ' + sw.swift_root_file(options.tag, int(options.pedrun)))
+                pedfilename = sw.swift_download_root_file(sw.swift_root_file(options.tag, int(options.pedrun)),int(options.pedrun),tmpdir)
+            else:
+                pedfilename = sw.swift_download_root_file(sw.swift_root_file(options.tag, int(options.pedrun)),int(options.pedrun),tmp=tmpdir,justName=True)                
+            tf = sw.swift_read_root_file(pedfilename)
+            keys = tf.keys()
+            mf = [0] # dummy array to make a common loop with MIDAS case
+        else:
+            sigrun,tmpdir,tag = self.tmpname
+            mf = sw.swift_download_midas_file(options.pedrun,tmpdir,tag)
+            #mf = self.tmpname
+
+        # first calculate the mean 
+        numev = 0
+        if  options.rawdata_tier == 'midas':
+            mf.jump_to_start()
+            for mevent in mf:
+                if mevent.header.is_midas_internal_event():
+                    continue
+                else:
+                    keys = mevent.banks.keys()
+                for iobj,key in enumerate(keys):
+                    name=key
+                    if name.startswith('CAM'):
+                        arr,_,_ = cy.daq_cam2array(mevent.banks[key])
+                        justSkip=False
+                        if (numev in self.options.excImages) and self.options.justPedestal: justSkip=True
+                        if (maxImages>-1 and numev>min(len(keys),maxImages)) and self.options.justPedestal: break
+                        if numev>250: break # no need to compute pedestals with >250 evts
+                            
+                        if numev%20 == 0:
+                            print("Calc pedestal mean with event: ",numev)
+                        if justSkip:
+                            continue
+                        if rebin>1:
+                            ctools.arrrebin(arr,rebin)
+                        pedsum = np.add(pedsum,arr)
+                        numev += 1
+        else:
+            #print ("keys = ",keys)
+            for i,name in enumerate(keys):
+                if 'pic' in name:
+                    patt = re.compile('\S+run(\d+)_ev(\d+)')
+                    m = patt.match(name)
+                    run = int(m.group(1))
+                    event = int(m.group(2))
+                justSkip=False
+                if (numev in self.options.excImages) and self.options.justPedestal: justSkip=True
+                if (maxImages>-1 and numev>min(len(keys),maxImages)) and self.options.justPedestal: break
+                if numev>250: break # no need to compute pedestals with >250 evts
+                if 'pic' not in name: justSkip=True
+                if justSkip:
+                    continue
+                if event%20 == 0:
+                    print("Calc pedestal mean with event: ",event)
+                arr = utilities.rootflip(tf,name,options.tag)                    #necessary to uniform root raw data to midas. This is a vertical flip (raw data differ between ROOT and MIDAS formats)
+                pedsum = np.add(pedsum,arr)
+                numev += 1
+        pedmean = pedsum / float(numev)
+
+        # now compute the rms (two separate loops is faster than one, yes)
+        numev=0
+        pedsqdiff = np.zeros((ny,nx))
+        numev = 0
+        if  options.rawdata_tier == 'midas':
+            mf.jump_to_start()
+            for mevent in mf:
+                if mevent.header.is_midas_internal_event():
+                    continue
+                else:
+                    keys = mevent.banks.keys()
+                for iobj,key in enumerate(keys):
+                    name=key
+                    if name.startswith('CAM'):
+                        arr,_,_ = cy.daq_cam2array(mevent.banks[key])
+                        justSkip=False
+                        if (numev in self.options.excImages) and self.options.justPedestal: justSkip=True
+                        if (maxImages>-1 and numev>min(len(keys),maxImages)) and self.options.justPedestal: break
+                        if numev>250: break # no need to compute pedestals with >250 evts 
+             
+                        if numev%20 == 0:
+                            print("Calc pedestal rms with event: ",numev)
+                        if justSkip:
+                             continue
+                        if rebin>1:
+                            ctools.arrrebin(arr,rebin)
+                        pedsqdiff = np.add(pedsqdiff, np.square(np.add(arr,-1*pedmean)))
+                        numev += 1
+        else:
+            for i,name in enumerate(keys):
+                if 'pic' in name:
+                    patt = re.compile('\S+run(\d+)_ev(\d+)')
+                    m = patt.match(name)
+                    run = int(m.group(1))
+                    event = int(m.group(2))
+                justSkip=False
+                if (numev in self.options.excImages) and self.options.justPedestal: justSkip=True
+                if (maxImages>-1 and numev>min(len(keys),maxImages)) and self.options.justPedestal: break
+                if numev>250: break # no need to compute pedestals with >250 evts
+                if 'pic' not in name: justSkip=True
+                if justSkip:
+                     continue
+
+                if event%20 == 0:
+                    print("Calc pedestal rms with event: ",event)
+                arr = utilities.rootflip(tf,name,options.tag)                     #see cycle above on pedmean
+                pedsqdiff = np.add(pedsqdiff, np.square(np.add(arr,-1*pedmean)))
+                numev += 1
+        pedrms = np.sqrt(pedsqdiff/float(numev-1))
+
+        # now save in a persistent ROOT object
+        # the inversion of x and y from array to histogram is correct: [row][columns] to x,y
+        for iy in range(ny):
+            for ix in range(nx):
+                pedmap.SetBinContent(ix+1,iy+1,pedmean[iy,ix]);
+                pedmap.SetBinError(ix+1,iy+1,pedrms[iy,ix]);
+                pedmapS.SetBinContent(ix+1,iy+1,pedrms[iy,ix]);
+
+        pedfile.cd()
+        pedmap.Write()
+        pedmapS.Write()
+        pedmean1D = ROOT.TH1D('pedmean','pedestal mean',500,97,103)
+        pedrms1D = ROOT.TH1D('pedrms','pedestal RMS',1000,0,10)
         for ix in range(nx):
             for iy in range(ny):
-                normmap.SetBinContent(ix+1,iy+1,min(mapnorm[ix,iy],1.));
-                summap.SetBinContent(ix+1,iy+1,mapsum[ix,iy]);
-     
-        tf_out.cd()
-        normmap.Write()
-        summap.Write()
-        tf_out.Close()
-        print("Written the mean map with rebinning {rb}x{rb} into file {outf}.".format(rb=rebin,outf=outfile))
+               pedmean1D.Fill(pedmap.GetBinContent(ix,iy)) 
+               pedrms1D.Fill(pedmap.GetBinError(ix,iy)) 
+        pedmean1D.Write()
+        pedrms1D.Write()
+        pedfile.Close()
+        print("Pedestal calculated and saved into ",pedfilename)
 
-    def getVignette1D(self,filevignette,det='lime'):
 
-        tf_in = ROOT.TFile.Open(filevignette)
-        vignettemap = tf_in.Get('normmap_{det}'.format(det=det))
-        xmax = vignettemap.GetXaxis().GetBinLowEdge(vignettemap.GetNbinsX()+1)
-        rmax = xmax/math.sqrt(2)
-        if int(xmax)==2048:
-            det = 'lemon'
-            extrap = 'lime'
-        else:
-            det = 'lime'
-            extrap = 'lemon'
-        vignettemap_meas = vignettemap.Clone('normmap_'+det)
-        vignettemap_meas.SetDirectory(0)
-        arr = np.array(vignettemap)
-        tf_in.Close()
+    def reconstruct(self,evrange=(-1,-1,-1)):
 
-        nbinsx = arr.shape[0]
-        nbinsR = int(nbinsx/math.sqrt(2))
-        binsizeR = rmax/nbinsR
-        print("rmax = ",rmax," nbinsr = ", nbinsR,"  binsizer = ",binsizeR)
+        ROOT.gROOT.Macro('rootlogon.C')
+        ROOT.gStyle.SetOptStat(0)
+        ROOT.gStyle.SetPalette(ROOT.kRainBow)
+        savErrorLevel = ROOT.gErrorIgnoreLevel; ROOT.gErrorIgnoreLevel = ROOT.kWarning
         
-        centerx = nbinsx/2; centery = centerx
-
-        x = np.arange(0, nbinsx)
-        y = np.arange(0, nbinsx)
+        ctools = cameraTools(self.cg)
+        print("Reconstructing event range: ",evrange[1],"-",evrange[2])
+        self.outputFile.cd()
         
-        tf_out = ROOT.TFile.Open('vign1d.root','recreate')
+        if self.options.rawdata_tier == 'root':
+            tf = sw.swift_read_root_file(self.tmpname)
+            keys = tf.keys()
+            mf = [0] # dummy array to make a common loop with MIDAS case
+        elif self.options.rawdata_tier == 'h5':
+            tf = sw.swift_read_h5_file(self.tmpname)
+            keys = tf.keys()
+            mf = [0] # dummy array to make a common loop with MIDAS case
 
-        vign1d = ROOT.TH1F('vign1d','',nbinsR,0,rmax)
-
-        for ib in range(nbinsR):
-            rlow  = vign1d.GetXaxis().GetBinLowEdge(ib+1)
-            rhigh = vign1d.GetXaxis().GetBinLowEdge(ib+2)
-            maskInner = (x[np.newaxis,:]-centerx)**2 + (y[:,np.newaxis]-centery)**2  < (ib+1)**2
-            maskOuter = (x[np.newaxis,:]-centerx)**2 + (y[:,np.newaxis]-centery)**2 >= ib**2
-            mask = (maskInner == 1) & (maskOuter == 1)
-            vals = arr[mask]
-            mean = np.mean(vals) 
-            meanerr = np.std(vals)/math.sqrt(len(vals))
-            print ("bin = ",ib,"\trlow = ",rlow,"\trhigh = ",rhigh,"\tmean = ",mean,"\tin = ",np.count_nonzero(maskInner),"\tout=",np.count_nonzero(maskOuter),"\tnumber=",np.count_nonzero(mask))
-            vign1d.SetBinContent(ib+1,mean)
-            vign1d.SetBinError(ib+1,meanerr)
-
-        vign1d.SetLineColor(ROOT.kBlack)
-        vign1d.SetMarkerColor(ROOT.kBlack)
-        vign1d.SetMarkerSize(0.3)
-        vign1d.SetMarkerStyle(ROOT.kFullCircle)
-        vign1d.SetLineWidth(1)
-        vign1d.SetMinimum(0)
-        vign1d.GetXaxis().SetTitle("Distance from center (pixels)")
-        vign1d.GetYaxis().SetTitle("Avg. LY ratio")
-
-        # now make the vignette map for the other camera (stretching the measured one)
-        print ("Now extrapolating from ",det," to the other camera...")
-        xmax2 = 2304 if det == 'lemon' else 2048
-        nbins2 = int(xmax2/binsizeR)
-        vignettemap_stretched = ROOT.TH2F('normmap_'+extrap,'',nbins2,0,xmax2,nbins2,0,xmax2)
-        stretch_factor = xmax2/xmax
-        center2 = nbins2/2
-        for ix in range(nbins2):
-            for iy in range(nbins2):
-                r_meas = math.hypot(ix-center2,iy-center2)/stretch_factor * binsizeR
-                i1d = vign1d.GetXaxis().FindFixBin(r_meas)
-                vignettemap_stretched.SetBinContent(ix+1,iy+1,vign1d.GetBinContent(i1d))
-
-        tf_out.cd()
-        vignettemap_meas.Write()        
-        vignettemap_stretched.Write()        
-        vign1d.Write()
-        tf_out.Close()
-
-    def plotVignetteMap(self,filein,name='summap_lime'):
-        tf = uproot.open(filein)
-        vignette = np.rot90(tf[name].values())
-        fig = plt.figure(figsize=(12,12))
-        plt.imshow(vignette,cmap='binary',origin='upper',vmin=350,vmax=800 )
-        plt.xlabel('x (pixels)', font, labelpad=20)
-        plt.ylabel('y (pixels)', font, labelpad=20)
-        plt.ylim(250,2000)
-        plt.gca().invert_yaxis()
-        plt.savefig('%s.pdf' % name)
-        
-        
-   # def setPedestalRun_v1(self,options):
-   #     if not hasattr(options,"pedrun"):
-   #         runlog='runlog_%s.csv' % (options.tag)
-   #         with open("pedestals/%s"%runlog,"r") as csvfile:
-   #             csvreader = csv.reader(csvfile, delimiter=',', quotechar='"')
-   #             # This skips the first row (header) of the CSV file.
-   #             next(csvreader)
-   #             for row in reversed(list(csvreader)):
-   #                 runkey,runtype,comment = row[:3]
-   #                 if row[-12].strip()!='': # >= run 3
-   #                     pedestal_flag = int(row[-12]) # count from the end, because the field [1] is a txt run description that sometimes has ","...
-   #                 else:
-   #                     pedestal_flag = (":PED:" in runtype)
-   #                 nevents = int(row[-2]) if (str(row[-2]).strip() not in ["NULL",'']) else 0
-   #                 if int(runkey)<=int(options.run) and pedestal_flag and nevents>=100:
-   #                     options.pedrun = int(runkey)
-   #                     print("Will use pedestal run %05d which has comment: '%s' and n of events: '%d'" % (int(runkey),comment,int(nevents)))
-   #                     break
-   #         assert hasattr(options,"pedrun"), ("Didn't find the pedestal corresponding to run %d in pedestals/%s. Check the csv runlog dump!"%(options.run,runlog))
-   #     setattr(options,'pedfile_fullres_name', 'pedestals/pedmap_run%s_rebin1.root' % (options.pedrun))
-
-
-    def setPedestalRun_v2(self,options):
-        import pandas as pd
-        import cygno as cy
-        
-        if not hasattr(options,"pedrun"):
-            run = int(options.run)
-            if options.offline==False:
-               df = cy.read_cygno_logbook(tag=options.tag,start_run=run-2000,end_run=run+1)
-            else:
-               runlog='runlog_%s_auto.csv' % (options.tag)
-               df = pd.read_csv('pedestals/%s'%runlog)
-               
-            dffilter = ((df["number_of_events"] >= 100) & (df["pedestal_run"] == 1) & (df["run_number"] <= run) & (df["HV_STATE"] == 0))
-            runkey = df.run_number[dffilter].values.tolist()[-1]
-            comment = df.run_description[dffilter].values.tolist()[-1]
-            nevents = df.number_of_events[dffilter].values.tolist()[-1]
-            options.pedrun = int(runkey)
-            if runkey:
-                print("Will use pedestal run %05d which has comment: '%s' and n of events: '%d'" % (int(runkey),comment,int(nevents)))
-            else:
-                print("Didn't find the pedestal corresponding to run %d in pedestals/%s. Check the csv runlog dump!" % (options.run, runlog))
-        setattr(options,'pedfile_fullres_name', 'pedestals/pedmap_run%s_rebin1.root' % (options.pedrun))        
-        
-        
-    def setPedestalRun(self,options):
-        run = int(options.run)
-        if (options.tag=='LNF' and run>10093) or (options.tag=='LNGS') or (options.tag=='MAN' and run>=11166):
-           self.setPedestalRun_v2(options)
-        #elif (options.tag=='LNGS' and run>936 and run<16798):
-        #   self.setPedestalRun_v1(options)
-        else:
-           if not hasattr(options,"pedrun"):
-              pedname= 'pedruns_%s.txt' % (options.tag.split('$')[0])
-              pf = open("pedestals/"+pedname,"r")
-              peddic = eval(pf.read())
-              options.pedrun = -1
-              for runrange,ped in peddic.items():
-                 if int(runrange[0])<=run<=int(runrange[1]):
-                     options.pedrun = int(ped)
-                     print("Will use pedestal run %05d, valid for run range [%05d - %05d]" % (int(ped), int(runrange[0]), (runrange[1])))
-                     break
-              assert options.pedrun>0, ("Didn't find the pedestal corresponding to run ",run," in the pedestals/",pedname," Check the dictionary inside it!")
-               
-           setattr(options,'pedfile_fullres_name', 'pedestals/pedmap_run%s_rebin1.root' % (options.pedrun))
-        return 
-    
-    def rootflip(self,rootfile,key,tag):
-        #Necessary conversion from root format to numpy matrix oriented exactly as the output of midas files
-        img_fr = rootfile[key].values().T            #necessary because uproot inverts column and rows with x and y
-        if tag=='MAN':
-            img_fr = img_fr[::-1]                  #necessary to uniform root raw data to midas. This is a vertical flip (raw data differ between ROOT and MIDAS formats)
-        return img_fr
-
-    def peak_memory_usage(self):
-        """Return peak memory usage in MB"""
-        mem = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
-        factor_mb = 1 / 1024
-        if sys.platform == "darwin":
-            factor_mb = 1 / (1024 * 1024)
-        return mem * factor_mb
-    
-    def conversion_env_variables(self, dslow, odb, i = 0, j_env = 0):
-        env_var = open('modules_config/env_variables.txt','r')
-        env_var = eval(env_var.read())
-        
-        if i == env_var['humidity']:
-            try:
-                conversion = odb.data['History']['Display']['GasSystem']['humidity']['Formula'][1]
-                dslow.loc[j_env,i] = eval(conversion.replace('x',str(dslow[i][j_env])))
-            except:
-                dslow.loc[j_env,i] = -99
-                #print('Warning: no humidity')
-                
-        if i == env_var['atm_temperature']:
-            try:
-                conversion = odb.data['History']['Display']['Environment']['Temperature']['Formula'][0]
-                dslow.loc[j_env,i] = eval(conversion.replace('x',str(dslow[i][j_env])))
-            except:
-                dslow.loc[j_env,i] = -99
-                #print('Warning: no atm temperature')
-                
-        if i == env_var['lime_temperature']:
-            try:
-                conversion = odb.data['History']['Display']['Environment']['Temperature']['Formula'][1]
-                dslow.loc[j_env,i] = eval(conversion.replace('x',str(dslow[i][j_env])))
-            except:
-                dslow.loc[j_env,i] = -99
-                #print('Warning: no lime temperature')
-                    
-        if i == env_var['lime_pressure']:
-            try:
-                conversion = odb.data['History']['Display']['Environment']['Pressure']['Formula'][0]
-                dslow.loc[j_env,i] = eval(conversion.replace('x',str(dslow[i][j_env])))
-            except:
-                dslow.loc[j_env,i] = -99
-                #print('Warning: no lime pressure')
-                
-        if i == env_var['atm_pressure']:
-            try:
-                conversion = odb.data['History']['Display']['Environment']['Pressure']['Formula'][0]
-                dslow.loc[j_env,i] = eval(conversion.replace('x',str(dslow[i][j_env])))
-            except:
-                dslow.loc[j_env,i] = -99
-                #print('Warning: no atm pressure')
-        
-        if i == env_var['mixture_density']:
-            try:
-                conversion = odb.data['History']['Display']['GasSystem']['Mixture Density']['Formula'][1]
-                dslow.loc[j_env,i] = eval(conversion.replace('x',str(dslow[i][j_env])))
-            except:
-                dslow.loc[j_env,i] = -99
-                #print('Warning: no mixture density')
-        
-        return dslow
-    
-    def read_env_variables(self, bank, dslow, odb, j_env=0):
-        import midas.file_reader
-        from datetime import datetime
-        import numpy as np
-        from matplotlib import pyplot as plt
-        import cygno as cy
-        import time
-        import pandas as pd
-        
-        slow = cy.daq_slow2array(bank)
-        #print(slow)
-        dslow.loc[len(dslow)] = slow
-        #print(dslow)
-        for i in dslow.keys():
-            dslow = self.conversion_env_variables(dslow, odb, i, j_env)           
-        j_env = j_env+1
+        elif self.options.rawdata_tier == 'midas':
+            run,tmpdir,tag = self.tmpname
+            mf = sw.swift_download_midas_file(run,tmpdir,tag)
             
-        return dslow
-        
-    def get_odb_pmt_info(self,mf,options,run):
-        import cygno as cy
-        if (options.tag == 'LNGS' and run>7790) or options.tag == 'LNF' or options.tag == 'MAN':
-            odb=cy.get_bor_odb(mf)
-            corrected  = odb.data['Configurations']['DRS4Correction']
-            channels_offsets  = odb.data['Configurations']['DigitizerOffset']
-            camera_exposure   = odb.data['Configurations']['Exposure']
+            ## Necessary to read the ODB to retrieve some info necessary for the waveform analysis
+            ## Seems to repeat the opening process but *doesn't* slow down the code.
+            if self.options.pmt_mode == 1:        
+                
+                odb,corrected,channels_offsets,camera_exposure = utilities.get_odb_pmt_info(mf,self.options,run)
 
-        else:       #ok these automatic settings are mostly valid for LIME at LNGS but should be checked for other detectors
-            odb = None
-            corrected = True
-            camera_exposure = 300
-            channels_offsets = 0
+            mf.jump_to_start()
+            dslow = pd.DataFrame()
+            if self.options.environment_variables:
+        
+                odb = cy.get_bor_odb(mf)
+                header_environment = odb.data['Equipment']['Environment']['Settings']['Names Input']
+                value_variables = odb.data['Equipment']['Environment']['Variables']
+                dslow = pd.DataFrame(columns = header_environment)
+                dslow.loc[len(dslow)] = value_variables['Input']
+                for i in dslow.keys():
+                    #try:
+                    dslow = utilities.conversion_env_variables(dslow, odb, i, j_env = 0)
+                    #except:
+                        #print("WARNING: conversion_env_variables failed.")
+                try:
+                   self.autotree.fillEnvVariables(dslow.take([0]))
+                   if not self.options.camera_mode:
+                            self.outTree.fill()
+                except:
+                   print("WARNING: could not fill dslow variables.")   
+                #print(dslow)
 
-        return odb,corrected,channels_offsets,camera_exposure
+                j_env = 1
 
-    def Param_storage(self, root_file, outfilename, nameconfig, options):
+        numev = 0
+        event=0
+        camera_read = False         #only useful for midas read 
+        pmt_read = False            #only useful for midas read... FIX: is it fine to use only camera_read in the for of mevent but before keys loop? probably yes
+        if self.options.pmt_mode == 0:
+            pmt_read = True
+        
+        exist_pmt = False
+        exist_cam = False
+        fails_count = 0
 
-        fout = open('{outname}.txt'.format(outname=outfilename),'w')
-        
-        fout.write('##########ConfigFile##########\n')
-        f_config = open('{name}'.format(name=nameconfig),'r')
-        content = f_config.read()
-        fout.write(content)
-        f_config.close() 
-        
-        fout.write('\n##########Geometry##########\n')
-        fgeometry = open('modules_config/geometry_{det}.txt'.format(det=options.geometry),'r')
-        content = fgeometry.read()
-        params = eval(content)
-        fout.write(content)
-        fgeometry.close()
-        
-        fout.write('\n##########Clustering##########\n')
-        fclustering = open('modules_config/clustering.txt','r')
-        content = fclustering.read()
-        params_cl = eval(content)
-        fout.write(content)
-        fclustering.close()
-        
-        fout.write('\n##########Environment##########\n')
-        fenv = open('modules_config/env_variables.txt','r')
-        content = fenv.read()
-        fout.write(content)
-        fenv.close()
-        
-        fout.write('\n##########Reco_content##########\n')
-        fcont = open('modules_config/reco_eventcontent.txt','r')
-        content = fcont.read()
-        fout.write(content)
-        fcont.close()
-        fout.close()
-        
-        #New tree addition for numerical parameters
-        treeparam = ROOT.TTree('Reco_params','Tree with parameters of the reconstruction')
-        ##Camera variables
-        camera_mode = np.array(options.camera_mode,dtype='intc')
-        treeparam.Branch('camera_mode',camera_mode,'camera_mode/I')
-        rebin = np.array(options.rebin,dtype='intc')
-        treeparam.Branch('rebin',rebin,'rebin/I')
-        nsigma = np.array(options.nsigma,dtype='float32')
-        treeparam.Branch('nsigma',nsigma,'nsigma/F')
-        min_neighbors_average = np.array(options.min_neighbors_average,dtype='float32')
-        treeparam.Branch('min_neighbors_average',min_neighbors_average,'min_neighbors_average/F')
-        cimax = np.array(options.cimax,dtype='intc')
-        treeparam.Branch('cimax',cimax,'cimax/I')
-        ##PMT variables
-        pmt_mode = np.array(options.pmt_mode, dtype='intc')
-        treeparam.Branch('pmt_mode', pmt_mode, 'pmt_mode/I')
-        pmt_threshold = np.array(options.threshold, dtype='intc')
-        treeparam.Branch('threshold', pmt_threshold, 'threshold/I')
-        array_channels = np.array(options.board_pmt_channels, dtype='intc')
-        lenchan = len(array_channels)
-        treeparam.Branch('Board_PMT', array_channels, 'Board_PMT['+ str(lenchan) +']/I')
-        height_RMS = np.array(options.height_RMS, dtype='intc')
-        treeparam.Branch('height_RMS', height_RMS, 'height_RMS/I')
-        minPeakDistance = np.array(options.minPeakDistance, dtype='intc')
-        treeparam.Branch('minPeakDistance', minPeakDistance, 'minPeakDistance/I')
-        prominence = np.array(options.prominence, dtype='float32')
-        treeparam.Branch('prominence', prominence, 'prominence/F')
-        fixed_prom = np.array(options.fixed_prom, dtype=bool)
-        treeparam.Branch('fixed_prom', fixed_prom, 'fixed_prom/O')
-        width = np.array(options.width, dtype='float32')
-        treeparam.Branch('width', width, 'width/F')
-        resample = np.array(options.resample, dtype='intc')
-        treeparam.Branch('resample', resample, 'resample/I')
-        
-        if params['cameratype'] == 'Flash':
-            npixx= 2048
-        if params['cameratype'] == 'Fusion':
-            npixx= 2304
-        if params['cameratype'] == 'Quest':
-            npixx= 4096
-        npixx = np.array(npixx, dtype='intc')
-        treeparam.Branch('npixx',npixx,'npixx/I')
-        xmin = np.array(params['xmin'], dtype='intc')
-        treeparam.Branch('xmin',xmin,'xmin/I')
-        xmax = np.array(params['xmax'], dtype='intc')
-        treeparam.Branch('xmax',xmax,'xmax/I')
-        ymin = np.array(params['ymin'], dtype='intc')
-        treeparam.Branch('ymin',ymin,'ymin/I')
-        ymax = np.array(params['ymax'], dtype='intc')
-        treeparam.Branch('ymax',ymax,'ymax/I')
-        
-        dbscan_eps = np.array(params_cl['dbscan_eps'],dtype='float32')
-        treeparam.Branch('dbscan_eps',dbscan_eps,'dbscan_eps/F')
-        dbscan_minsamples = np.array(params_cl['dbscan_minsamples'],dtype='float32')
-        treeparam.Branch('dbscan_minsamples',dbscan_minsamples,'dbscan_minsamples/F')
-        dir_radius = np.array(params_cl['dir_radius'],dtype='float32')
-        treeparam.Branch('dir_radius',dir_radius,'dir_radius/F')
-        dir_min_accuracy = np.array(params_cl['dir_min_accuracy'],dtype='float32')
-        treeparam.Branch('dir_min_accuracy',dir_min_accuracy,'dir_min_accuracy/F')
-        dir_minsamples = np.array(params_cl['dir_minsamples'],dtype='float32')
-        treeparam.Branch('dir_minsamples',dir_minsamples,'dir_minsamples/F')
-        dir_thickness = np.array(params_cl['dir_thickness'],dtype='float32')
-        treeparam.Branch('dir_thickness',dir_thickness,'dir_thickness/F')
-        time_threshold = np.array(params_cl['time_threshold'],dtype='float32')
-        treeparam.Branch('time_threshold',time_threshold,'time_threshold/F')
-        max_attempts = np.array(params_cl['max_attempts'],dtype='float32')
-        treeparam.Branch('max_attempts',max_attempts,'max_attempts/F')
-        isolation_radius = np.array(params_cl['isolation_radius'],dtype='float32')
-        treeparam.Branch('isolation_radius',isolation_radius,'isolation_radius/F')
-        
-        treeparam.Fill()
-        treeparam.Write()
+        for mevent in mf:
+            if self.options.rawdata_tier == 'midas':
+                if mevent.header.is_midas_internal_event():
+                    continue
+                else:
+                    keys = mevent.banks.keys()
+
+            if camera_read and pmt_read:
+                numev +=1   
+            camera_read = False         #only useful for midas read 
+            pmt_read = False            #only useful for midas read
+            if self.options.pmt_mode == 0:
+                pmt_read = True
+            else:
+                if exist_cam and not exist_pmt:
+                    fails_count +=1
+                    if fails_count==3:
+                        print('\nCareful: you set the PMT analysis ON but no PMT bank was found. Are you sure PMT data is available for this run?\n ANALYSIS FAILED')
+                        sys.exit()
+                    else:
+                         exist_pmt = False
+                         exist_cam = False   
+
+            for iobj,key in enumerate(keys):
+                name=key
+                camera = False
+                pmt = False
+                #print(name)
 
 
-class bcolors:
-    HEADER = '\033[95m'
-    OKBLUE = '\033[94m'
-    OKGREEN = '\033[92m'
-    WARNING = '\033[93m'
-    FAIL = '\033[91m'
-    ENDC = '\033[0m'
-    BOLD = '\033[1m'
-    UNDERLINE = '\033[4m'
+                if self.options.rawdata_tier == 'root':
+                    if 'pic' in name:
+                        patt = re.compile('\S+run(\d+)_ev(\d+)')
+                        m = patt.match(name)
+                        run = int(m.group(1))
+                        event = int(m.group(2))
+                        img_fr = utilities.rootflip(tf,key,self.options.tag)     #necessary to uniform root raw data to midas. This is a vertical flip (raw data differ between ROOT and MIDAS formats)
+                        camera=True
 
-if __name__ == "__main__":
-    parser = optparse.OptionParser(usage='usage: %prog [opts] ', version='%prog 1.0')
-    parser.add_option('', '--make'   , type='string'       , default='calcVignette' , help='run utilities.py (options = calcVignette)')
+                elif self.options.rawdata_tier == 'h5':
+                    if 'pic' in name:
+                        patt = re.compile('\S+run(\d+)_ev(\d+)')
+                        m = patt.match(name)
+                        run = int(m.group(1))
+                        event = int(m.group(2))
+                        img_fr = np.rot90(tf[key][:])
+                        camera=True
+
+                elif self.options.rawdata_tier == 'midas':
+                    run = int(self.options.run)
+                    if name.startswith('CAM'):
+                        camera_read = True
+                        exist_cam = True
+                        if options.camera_mode:
+                            img_fr,_,_ = cy.daq_cam2array(mevent.banks[key])
+                            camera=True
+                    
+                    elif name.startswith('INPT') and self.options.environment_variables: # SLOW channels array
+                        if mevent.header.event_id==5:
+                            dslow = utilities.read_env_variables(mevent.banks[key], dslow, odb, j_env=j_env)
+                            self.autotree.fillEnvVariables(dslow.take([j_env]))
+                            j_env = j_env+1
+                            if not self.options.camera_mode:
+                                if self.options.jobs != 1:
+                                    if numev>=evrange[1]: self.outTree.fill()
+                                else:
+                                    self.outTree.fill()
+                    
+                    elif name.startswith('DGH0'):
+                        pmt_read = True
+                        exist_pmt = True
+                        fast_digitizer = False
+                        slow_digitizer = False
+                        if self.options.pmt_mode:
+                            header=cy.daq_dgz_full2header(mevent.banks[key], verbose=False)
+                            # sample_rate = header.sampling_rate
+
+                            ## Care: if tag is MC$blabla, the tag for the digitizer will have to be changed to LNGS or something
+                            waveform_f, waveform_s = cy.daq_dgz_full2array(mevent.banks['DIG0'], header, verbose=False, corrected=corrected, ch_offset=channels_offsets,tag=self.options.tag)
+
+                            for idigi,digitizer in enumerate(header.boardNames):
+
+                                if str(digitizer) == '1742' and len(waveform_f):  
+
+                                    fast_digitizer = True
+                                    nChannels_f  = header.nchannels[idigi]
+                                    nTriggers_f = len(header.TTT[idigi])
+                                    TTTs_f = header.TTT[idigi]
+
+                                elif str(digitizer) == '1720' and len(waveform_s):
+                                    
+                                    slow_digitizer = True
+                                    nChannels_s  = header.nchannels[idigi]
+                                    nTriggers_s = len(header.TTT[idigi])
+                                    TTTs_s = header.TTT[idigi]
+
+                            pmt = True
+
+                    event=numev
+
+                justSkip = False
+                if event<evrange[1]: justSkip=True
+                if event>evrange[2]: return # avoids seeking up to EOF which with MIDAS is slow
+                if event in self.options.excImages: justSkip=True
+                if self.options.debug_mode == 1 and event != self.options.ev: justSkip=True
+                if justSkip:
+                    continue
+
+                if self.options.camera_mode:
+                    if camera==True:
+                        print("Processing Run: ",run,"- Event ",event,"Camera...")
+                        self.outTree.fillBranch("run",run)
+                        self.outTree.fillBranch("event",event)
+                        self.outTree.fillBranch("pedestal_run", int(self.options.pedrun))
+                    
+                        testspark=2*100*self.cg.npixx*self.cg.npixy+9000000		
+                        if np.sum(img_fr)>testspark:
+                            print("Run ",run,"- Event ",event," has spark, will not be analyzed!")
+                            continue
+
+                        if self.options.save_MC_data:
+                            mc_tree = tf.Get('event_info/info_tree')
+                            mc_tree.GetEntry(event)
+                            self.outTree.fillBranch("eventnumber",mc_tree.eventnumber)
+                            self.outTree.fillBranch("particle_type",mc_tree.particle_type)
+                            self.outTree.fillBranch("energy",mc_tree.energy_ini)
+                            self.outTree.fillBranch("ioniz_energy",mc_tree.ioniz_energy)
+                            self.outTree.fillBranch("drift",mc_tree.drift)
+                            self.outTree.fillBranch("phi_initial",mc_tree.phi_ini)
+                            self.outTree.fillBranch("theta_initial",mc_tree.theta_ini)
+                            self.outTree.fillBranch("MC_x_vertex",mc_tree.x_vertex)
+                            self.outTree.fillBranch("MC_y_vertex",mc_tree.y_vertex)
+                            self.outTree.fillBranch("MC_z_vertex",mc_tree.z_vertex)
+                            self.outTree.fillBranch("MC_x_vertex_end",mc_tree.x_vertex_end)
+                            self.outTree.fillBranch("MC_y_vertex_end",mc_tree.y_vertex_end)
+                            self.outTree.fillBranch("MC_z_vertex_end",mc_tree.z_vertex_end)
+                            self.outTree.fillBranch("MC_2D_pathlength",mc_tree.proj_track_2D)
+                            self.outTree.fillBranch("MC_3D_pathlength",mc_tree.track_length_3D)
+         
+                        # Upper Threshold full image
+                        img_cimax = np.where(img_fr < self.options.cimax, img_fr, 0)
+                        
+                        # zs on full image + saturation correction on full image or skip it
+                        t_pre0 = time.perf_counter()
+                        img_fr_sub = ctools.pedsub(img_cimax,self.pedarr_fr)
+                        t_pre1 = time.perf_counter()
+                        if self.options.saturation_corr:
+                            #print("you are in saturation correction mode")
+                            img_fr_satcor = ctools.satur_corr(img_fr_sub) 
+                        else:
+                            #print("you are in poor mode")
+                            img_fr_satcor = img_fr_sub
+                        t_pre2 = time.perf_counter()
+                        img_fr_zs  = ctools.zsfullres(img_fr_satcor,self.noisearr_fr,nsigma=self.options.nsigma)
+                        t_pre3 = time.perf_counter()
+                        img_fr_zs_acc = ctools.acceptance(img_fr_zs,self.cg.ymin,self.cg.ymax,self.cg.xmin,self.cg.xmax)
+                        t_pre4 = time.perf_counter()
+                        img_rb_zs  = ctools.arrrebin(img_fr_zs_acc,self.rebin)
+                        t_pre5 = time.perf_counter()
+                            
+                        t_pedsub = t_pre1 - t_pre0
+                        t_saturation = t_pre2 - t_pre1
+                        t_zerosup = t_pre3 - t_pre2
+                        t_xycut = t_pre4 - t_pre3
+                        t_rebin = t_pre5 - t_pre4
+                            
+                        # Cluster reconstruction on 2D picture
+                        algo = 'DBSCAN'
+                        if self.options.rawdata_tier == 'midas':
+                            name = name + '_run' + str(run)+ '_' + str(event)
+                        snprod_inputs = {'picture': img_rb_zs, 'pictureHD': img_fr_satcor, 'picturezsHD': img_fr_zs, 'pictureOri': img_fr, 'vignette': self.vignmap, 'name': name, 'algo': algo}
+                        plotpy = self.options.jobs < 2 # for some reason on macOS this crashes in multicore
+                        snprod_params = {'snake_qual': 3, 'plot2D': False, 'plotpy': False, 'plotprofiles': False}
+                        t_DBSCAN_0 = time.perf_counter()
+                        snprod = SnakesProducer(snprod_inputs,snprod_params,self.options,self.cg)
+                        t_DBSCAN_1 = time.perf_counter()
+                        snakes, t_DBSCAN, t_variables, lp_len, t_medianfilter, t_noisered = snprod.run()
+                        t_DBSCAN_2 = time.perf_counter()
+                        if self.options.debug_mode == 1:
+                            print(f"1. DBSCAN run + variables calculation in {t_DBSCAN_2 - t_DBSCAN_1:0.4f} seconds")
+                        self.autotree.fillCameraVariables(img_fr_zs)
+                        t_DBSCAN_3 = time.perf_counter()
+                        if self.options.debug_mode == 1:
+                            print(f"fillCameraVariables in {t_DBSCAN_3 - t_DBSCAN_2:0.4f} seconds")
+                        self.autotree.fillClusterVariables(snakes,'sc')
+                        t_DBSCAN_4 = time.perf_counter()
+                        self.autotree.fillTimeCameraVariables(t_variables, t_DBSCAN, lp_len, t_pedsub, t_saturation, t_zerosup, t_xycut, t_rebin, t_medianfilter, t_noisered)
+                        if self.options.debug_mode == 1:
+                            print(f"fillClusterVariables in {t_DBSCAN_4 - t_DBSCAN_3:0.04f} seconds")
+                            print()
+                        del img_fr_sub,img_fr_satcor,img_fr_zs,img_fr_zs_acc,img_rb_zs
+                        self.outTree.fill()
+                        del img_fr
+                        
+         
+                if self.options.pmt_mode:
+                    if pmt == True:
+                        print("Processing Run: ",run,"- Event ",event,"PMT...")
+                        t00_wave =  time.perf_counter()
+                        chs_to_analyse = len(self.options.board_pmt_channels)
+                        fast_sampling = 1024
+                        slow_sampling = 4000
+
+                        ## Fast waveforms
+                        if fast_digitizer:
+                            if self.options.debug_mode == 1:
+                                print("Number of fast triggers: {}".format(nTriggers_f))
+
+                            for trg in range(nTriggers_f):    
+
+                                insideGE = 0
+                                # Uses the TTTs to check this condition
+                                if (TTTs_f[trg] * 8.5/1000/1000) >= 180 and (TTTs_f[trg] * 8.5/1000/1000) <= (camera_exposure*1000):
+                                    insideGE = 1
+
+                                # Prepare the weighted average waveform 
+                                sing_weig_avg_fast_wf = [ [0]*fast_sampling for _ in range(chs_to_analyse)]  
+                                fast_wf_weights_snr = [0] * chs_to_analyse
+                                weight_average_wf = [0]* fast_sampling
+
+                                for ichf,chf in enumerate(self.options.board_pmt_channels):
+
+                                    indx = trg * nChannels_f + chf
+                                    waveform_info = { 'run' : run, 'event': event, 'channel' : chf, 'trigger' : trg , 'GE' : insideGE, 'sampling' : "fast", 'TTT' : (TTTs_f[trg]*8.5/1000./1000.)}
+
+                                    t0_waveforms = time.perf_counter()
+
+                                    fast_waveform = PMTreco(waveform_info, waveform_f[indx], self.pmt_params)
+                                    fast_waveform.__repr__()
+
+                                    t1_waveforms = time.perf_counter()
+                                    t_waveforms = t1_waveforms - t0_waveforms
+
+                                    self.autotree_pmt.fillPMTVariables(fast_waveform) 
+                                    self.autotree_pmt.fillTimePMTVariables(t_waveforms)
+                                    self.outTree_pmt.fill()
+
+                                    # Weighted averaged waveform (weight = SNR)
+                                    snr_ratio = fast_waveform.getSignalToNoise()
+                                    fast_wf_weights_snr[ichf] = snr_ratio
+                                    sing_weig_avg_fast_wf[ichf] = waveform_f[indx]
+
+                                    # If one wants to visualize the new weighted waveforms,
+                                    # meaning how much they actual weight for the final average, 
+                                    # Ask David for the script changes
+
+                                    if len(self.options.board_pmt_channels) > 1 and chf == self.options.board_pmt_channels[-1]:
+
+                                        fast_wf_weights_snr = [ (x / max(fast_wf_weights_snr)) for x in fast_wf_weights_snr ]   # Normalization of the weights
+                                        
+                                        for k in range(chs_to_analyse):
+                                        
+                                            for j in range(fast_sampling):
+
+                                                weight_average_wf[j] += sing_weig_avg_fast_wf[k][j]*fast_wf_weights_snr[k]/sum(fast_wf_weights_snr)
+
+                                        waveform_info_fast_wei_avg = { 'run' : run, 'event': event, 'channel' : 9, 'trigger' : trg, 'GE' : 9, 'sampling' : "fast"}
+
+                                        t0_waveforms = time.perf_counter()
+                                        fast_waveform_wei_avg = PMTreco(waveform_info_fast_wei_avg, weight_average_wf, self.pmt_params)
+                                        t1_waveforms = time.perf_counter()
+                                        t_waveforms = t1_waveforms - t0_waveforms
+
+                                        self.autotree_pmt_avg.fillPMTVariables_average(fast_waveform_wei_avg)
+                                        self.autotree_pmt_avg.fillTimePMTVariables(t_waveforms)
+                                        #fast_waveform_wei_avg.__repr__()           ## Verbose of averaged waveform
+                                        self.outTree_pmt_avg.fill()
+
+                                        del waveform_info_fast_wei_avg
+                                        del fast_waveform_wei_avg
+
+                                    del waveform_info
+                                    del fast_waveform
+                                
+                                # GEM readout. Only available for fast digitizer
+                                # No computing time properties for GEM for now.
+                                if options.include_gem:
+                                    for ichf_gem,chf_gem in enumerate(self.options.board_gem_channels):
+
+                                        indx = trg * nChannels_f + chf_gem
+                                        waveform_info = { 'run' : run, 'event': event, 'channel' : chf_gem, 'trigger' : trg , 'GE' : insideGE, 'sampling' : "fast", 'TTT' : (TTTs_f[trg]*8.5/1000./1000.)}
+
+                                        fast_gem_waveform = PMTreco(waveform_info, waveform_f[indx], self.pmt_params)
+                                        # fast_gem_waveform.__repr__()
+
+                                        self.autotree_gem.fillPMTVariables(fast_gem_waveform) 
+                                        self.outTree_gem.fill()
+
+                                        del fast_gem_waveform
+
+                            del waveform_f
+
+                        # Slow waveforms
+                        if slow_digitizer:
+                            if self.options.debug_mode == 1:
+                                print("Number of slow triggers: {}".format(nTriggers_s))
+
+                            for trg in range(nTriggers_s):    
+
+                                insideGE = 0
+                                if (TTTs_s[trg] * 8.5/1000/1000) >= 180 and (TTTs_s[trg] * 8.5/1000/1000) <= (camera_exposure*1000):
+                                    insideGE = 1
+
+                                sing_weig_avg_slow_wf = [ [0]* slow_sampling for _ in range(chs_to_analyse)]  
+                                slow_wf_weights_snr = [0] * chs_to_analyse
+                                weight_average_wf = [0]* slow_sampling
+
+                                for ichs,chs in enumerate(self.options.board_pmt_channels):
+
+                                    indx = trg * nChannels_s + chs
+                                    waveform_info = { 'run' : run, 'event': event, 'channel' : chs, 'trigger' : trg , 'GE' : insideGE , 'sampling' : "slow", 'TTT' : (TTTs_s[trg]*8.5/1000./1000.)}
+                                    
+                                    t0_waveforms = time.perf_counter()
+
+                                    slow_waveform = PMTreco(waveform_info, waveform_s[indx], self.pmt_params)
+                                    slow_waveform.__repr__()
+
+                                    t1_waveforms = time.perf_counter()
+                                    t_waveforms = t1_waveforms - t0_waveforms
+
+                                    self.autotree_pmt.fillPMTVariables(slow_waveform) 
+                                    self.autotree_pmt.fillTimePMTVariables(t_waveforms)
+                                    self.outTree_pmt.fill()
+
+                                    snr_ratio = slow_waveform.getSignalToNoise()
+                                    slow_wf_weights_snr[ichs] = snr_ratio
+                                    sing_weig_avg_slow_wf[ichs] = waveform_s[indx]
+
+                                    if len(self.options.board_pmt_channels) > 1 and chs == self.options.board_pmt_channels[-1]:
+
+                                        slow_wf_weights_snr = [ (x / max(slow_wf_weights_snr)) for x in slow_wf_weights_snr ]   # Normalization of the weights
+
+                                        for k in range(chs_to_analyse):
+
+                                            for j in range(slow_sampling):
+
+                                                weight_average_wf[j] += sing_weig_avg_slow_wf[k][j]*slow_wf_weights_snr[k]/sum(slow_wf_weights_snr)
+
+                                        waveform_info_slow_wei_avg = { 'run' : run, 'event': event, 'channel' : 9, 'trigger' : trg, 'GE' : 9, 'sampling' : "slow"}
+
+                                        t0_waveforms = time.perf_counter()
+                                        slow_waveform_wei_avg = PMTreco(waveform_info_slow_wei_avg, weight_average_wf, self.pmt_params)
+                                        t1_waveforms = time.perf_counter()
+                                        t_waveforms = t1_waveforms - t0_waveforms
+
+                                        self.autotree_pmt_avg.fillPMTVariables_average(slow_waveform_wei_avg)
+                                        self.autotree_pmt_avg.fillTimePMTVariables(t_waveforms)
+                                        #slow_waveform_wei_avg.__repr__()           ## Verbose of averaged waveform
+                                        self.outTree_pmt_avg.fill()
+
+                                        del waveform_info_slow_wei_avg
+                                        del slow_waveform_wei_avg
+
+                                    del waveform_info
+                                    del slow_waveform
+
+                                # ... There is no slow board for GEM signals 
+                                # for ichs_gem,chs_gem in enumerate(self.options.board_gem_channels):
+
+                            del waveform_s
+
+                        del header
+                        
+                        t01_wave =  time.perf_counter()
+                        if self.options.debug_mode == 1:
+                            print(f'PMT Reco Code Took: {t01_wave - t00_wave} seconds')
+                        # END of `if pmt`
+                # END of `if self.options.pmt_mode`
+                
+        gc.collect()
+             
+        ROOT.gErrorIgnoreLevel = savErrorLevel
+                
+if __name__ == '__main__':
+    from optparse import OptionParser
+    t0 = time.perf_counter()
+    parser = OptionParser(usage='%prog h5file1,...,h5fileN [opts] ')
+    parser.add_option('-r', '--run', dest='run', default='00000', type='string', help='run number with 5 characteres')
+    parser.add_option('-j', '--jobs', dest='jobs', default=1, type='int', help='Jobs to be run in parallel (-1 uses all the cores available)')
+    parser.add_option(      '--max-entries', dest='maxEntries', default=-1, type='int', help='Process only the first n entries')
+    parser.add_option(      '--first-event', dest='firstEvent', default=-1, type='int', help='Skip all the events before this one')
+    parser.add_option(      '--pdir', dest='plotDir', default='./', type='string', help='Directory where to put the plots')
+    parser.add_option('-t',  '--tmp',  dest='tmpdir', default=None, type='string', help='Directory where to put the input file. If none is given, /tmp/<user> is used')
+    parser.add_option(      '--max-hours', dest='maxHours', default=-1, type='float', help='Kill a subprocess if hanging for more than given number of hours.')
+    parser.add_option('-o', '--outname', dest='outname', default='reco', type='string', help='prefix for the output file name')
+    parser.add_option('-d', '--outdir', dest='outdir', default='.', type='string', help='Directory where to save the output file')
+    parser.add_option(      '--git', dest='githash', default=None, type='string', help='git hash of the version of the reco code in use which you may want to give manually')
+        
     (options, args) = parser.parse_args()
+    
+    f = open(args[0], "r")
+    params = eval(f.read())
 
-    if options.make == 'calcVignette':
-        run = 5890
-        pedfile = 'pedestals/pedmap_run5861_rebin1.root'
-        ut = utils()
-        ut.calcVignettingMap(run,pedfile,"vignette_run%05d.root" % run,det='lime',rebin=8,maxImages=10000)
+    for k,v in params.items():
+        setattr(options,k,v)
 
-    if options.make == 'vignette1d':
-        ut = utils()
-        ut.getVignette1D('vignette_run04117.root')
-
-    if options.make == 'plotVignette':
-        ut = utils()
-        ut.plotVignetteMap("vignette_run05890.root","summap_lime")
-
+    run = int(options.run)
+    
+    if options.debug_mode == 1:
+        setattr(options,'outFile','%s_run%d_%s_debug.root' % (options.outname, run, options.tip))
+        #if options.ev: options.maxEntries = options.ev + 1
+        #if options.daq == 'midas': options.ev +=0.5 
+    else:
+        setattr(options,'outFile','%s_run%05d_%s.root' % (options.outname, run, options.tip))
+    # FIX: if only pmt mode, don't need to compute pedestal
+    if options.camera_mode:
+        utilities.setPedestalRun(options)        
         
+    try:
+        USER = os.environ['USER']
+        flag_env = 0
+    except:
+        flag_env = 1
+        try:
+          USER = os.environ['JUPYTERHUB_USER']
+        except:
+          USER = "autoreco"
+    #tmpdir = '/mnt/ssdcache/' if os.path.exists('/mnt/ssdcache/') else '/tmp/'
+    # it seems that ssdcache it is only mounted on cygno-login, not in the batch queues (neither in cygno-custom)
+    tmpdir = '/tmp'
+    os.system('mkdir -p {tmpdir}/{user}'.format(tmpdir=tmpdir,user=USER))
+    tmpdir = '{tmpdir}/{user}/'.format(tmpdir=tmpdir,user=USER) if not options.tmpdir else options.tmpdir+"/"
+    if sw.checkfiletmp(int(options.run),options.rawdata_tier,tmpdir):
+        if options.rawdata_tier=='root':
+            prefix = 'histograms_Run'
+            postfix = 'root'
+        elif options.rawdata_tier=='h5':
+            prefix = 'histograms_Run'
+            postfix = 'h5'
+        else:
+            prefix = 'run'
+            postfix = 'mid.gz'
+        options.tmpname = "%s/%s%05d.%s" % (tmpdir,prefix,int(options.run),postfix)
+    else:
+        if options.rawdata_tier == 'root': 
+            file_url = sw.swift_root_file(options.tag, int(options.run))
+            print ('Downloading file: ' + file_url)
+            options.tmpname = sw.swift_download_root_file(file_url,int(options.run),tmpdir)
+        if options.rawdata_tier == 'h5':
+            options.tmpname = ("%s/histograms_Run%05d.h5" % (tmpdir,int(options.run))) 
+        else:
+            print ('Downloading MIDAS.gz file for run ' + options.run)
+    # in case of MIDAS, download function checks the existence and in case it is absent, downloads it. If present, opens it
+    if options.rawdata_tier == 'midas':
+        ## need to open it (and create the midas object) in the function, otherwise the async run when multithreaded will confuse events in the two threads
+        options.tmpname = [int(options.run),tmpdir,options.tag]		#This line needs to be corrected if MC data will be in midas format. Not foreseen at all
+    if options.justPedestal:
+        ana = analysis(options)
+        print("Pedestals done. Exiting.")
+        if options.donotremove == False:
+            sw.swift_rm_root_file(options.tmpname)
+        sys.exit(0)
+
+    ana = analysis(options)
+    nev = ana.getNEvents(options)
+    print("\nThis run has ",nev," events.")
+    if options.debug_mode == 1: print('DEBUG mode activated. Only event',options.ev,'will be analysed')
+    # FIX: the option for saving plots should only be ON only if camera mode is ON
+    print("I Will save plots to ",options.plotDir)
+    os.system('cp utils/index.php {od}'.format(od=options.plotDir))
+    os.system('mkdir -p {pdir}'.format(pdir=options.plotDir))
+    
+    nThreads = 1
+    if options.jobs==-1:
+        import multiprocessing
+        nThreads = min(multiprocessing.cpu_count(),nev)
+    else:
+        nThreads = min(options.jobs,nev)
+
+    t1 = time.perf_counter()
+    firstEvent = 0 if options.firstEvent<0 else options.firstEvent
+    lastEvent = nev if options.maxEntries==-1 else min(nev,firstEvent+options.maxEntries)
+    if options.debug_mode == 1: lastEvent = min(nev,int(options.ev))
+    
+    print ("Analyzing from event %d to event %d" %(firstEvent,lastEvent))
+    base = options.outFile.split('.')[0]
+    if nThreads>1:
+        print ("RUNNING USING ",nThreads," THREADS.")
+        nj = int(nev/nThreads) if options.maxEntries==-1 else max(int((lastEvent-firstEvent)/nThreads),1)
+        chunks = [(ichunk,i,min(i+nj-1,nev)) for ichunk,i in enumerate(range(firstEvent,lastEvent,nj))]
+        if len(chunks)>nThreads:
+            chunks[-2] = (chunks[-2][0],chunks[-2][1],chunks[-1][2])
+            del chunks[-1]
+        print("Chunks = ",chunks)
+        with futures.ProcessPoolExecutor(nThreads) as executor:
+            futures_list = [executor.submit(ana,c) for c in chunks]
+            for future in futures.as_completed(futures_list):
+                # retrieve the result. This is crucial, because result() does not exit until the process is completed.
+                future.result()
+        print("Now hadding the chunks...")
+        if flag_env == 0:
+            os.system('hadd -k -f {outdir}/{base}.root {outdir}/{base}_chunk*.root'.format(base=base, outdir=options.outdir))
+        else:
+            os.system('/usr/bin/hadd -k -f {outdir}/{base}.root {outdir}/{base}_chunk*.root'.format(base=base, outdir=options.outdir))
+        os.system('rm {outdir}/{base}_chunk*.root'.format(base=base, outdir=options.outdir))
+    else:
+        evrange=(-1,firstEvent,lastEvent)
+        ana(evrange)
+    t2 = time.perf_counter()
+    if options.debug_mode == 1:
+        print(f'Reconstruction Code Took: {t2 - t1} seconds')
+
+    # now add extra information
+    tf = ROOT.TFile.Open("{outdir}/{base}.root".format(base=base, outdir=options.outdir),'update')
+    # now add parameters of the reconstruction
+    utilities.Param_storage(tf,base,args[0],options)
+    # now add the git commit hash to track the version in the ROOT file
+    if options.githash != None:
+       githash=ROOT.TNamed("gitHash",options.githash)
+       githash.Write()       
+    else:
+       try:
+          githash = ROOT.TNamed("gitHash",str(utilities.get_git_revision_hash()).replace("\\n'","").replace("b'",""))
+          githash.Write()
+       except:
+          print('No githash provided nor githash found (no .git folder?)') 
+    # now add the time of reconstruction
+    total_time = ROOT.TNamed("total_time", str(t2-t1))
+    total_time.Write()
+    tf.Close()
+    
+    if options.donotremove == False:
+        if options.rawdata_tier=='midas':
+            prefix = 'run'
+            postfix = 'mid.gz'
+            options.tmpname = "%s/%s%05d.%s" % (tmpdir,prefix,int(options.run),postfix)
+        sw.swift_rm_root_file(options.tmpname)
+    
+    t3 = time.perf_counter()
+    if options.debug_mode == 1:
+           print(f'Total time the Code Took: {t3 - t0} seconds')
