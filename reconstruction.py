@@ -304,7 +304,7 @@ class analysis:
                     continue
                 if event%20 == 0:
                     print("Calc pedestal mean with event: ",event)
-                arr = utilities.rootflip(tf,name,options.tag,options.rawdata_tier)                    #necessary to uniform root raw data to midas. This is a vertical flip (raw data differ between ROOT and MIDAS formats)
+                arr = utilities.rootflip(tf,name,options.tag)                    #necessary to uniform root raw data to midas. This is a vertical flip (raw data differ between ROOT and MIDAS formats)
                 pedsum = np.add(pedsum,arr)
                 numev += 1
         pedmean = pedsum / float(numev)
@@ -354,7 +354,7 @@ class analysis:
 
                 if event%20 == 0:
                     print("Calc pedestal rms with event: ",event)
-                arr = utilities.rootflip(tf,name,options.tag,options.rawdata_tier)                     #see cycle above on pedmean
+                arr = utilities.rootflip(tf,name,options.tag)                     #see cycle above on pedmean
                 pedsqdiff = np.add(pedsqdiff, np.square(np.add(arr,-1*pedmean)))
                 numev += 1
         pedrms = np.sqrt(pedsqdiff/float(numev-1))
@@ -446,8 +446,6 @@ class analysis:
         exist_pmt = False
         exist_cam = False
         fails_count = 0
-        timestamp = -1
-        timestamp0 = 0
 
         for mevent in mf:
             if self.options.rawdata_tier == 'midas':
@@ -471,9 +469,6 @@ class analysis:
                     else:
                          exist_pmt = False
                          exist_cam = False   
-            
-            if self.options.rawdata_tier == 'midas':
-                timestamp=mevent.header.timestamp
 
             for iobj,key in enumerate(keys):
                 name=key
@@ -481,13 +476,14 @@ class analysis:
                 pmt = False
                 #print(name)
 
+
                 if self.options.rawdata_tier == 'root':
                     if 'pic' in name:
                         patt = re.compile('\S+run(\d+)_ev(\d+)')
                         m = patt.match(name)
                         run = int(m.group(1))
                         event = int(m.group(2))
-                        img_fr = utilities.rootflip(tf,key,self.options.tag,self.options.rawdata_tier)     #necessary to uniform root raw data to midas. This is a vertical flip (raw data differ between ROOT and MIDAS formats)
+                        img_fr = utilities.rootflip(tf,key,self.options.tag)     #necessary to uniform root raw data to midas. This is a vertical flip (raw data differ between ROOT and MIDAS formats)
                         camera=True
 
                 elif self.options.rawdata_tier == 'h5':
@@ -496,18 +492,11 @@ class analysis:
                         m = patt.match(name)
                         run = int(m.group(1))
                         event = int(m.group(2))
-                        img_fr = utilities.rootflip(tf,key,self.options.tag,self.options.rawdata_tier)                    #structure for h5 copied from ROOT as it was in the past. Unsure if it is correct
+                        img_fr = np.rot90(tf[key][:])
                         camera=True
 
                 elif self.options.rawdata_tier == 'midas':
                     run = int(self.options.run)
-
-                    if name == 'TIME':
-                        timestamp0 = mevent.banks[key].data[0]
-                        #print(timestamp0,timestamp)
-                    if timestamp<10000:             #10000 in seconds is 2h 46 min. This time should be larger than the run duration
-                        timestamp = timestamp0*1000 + timestamp
-                    
                     if name.startswith('CAM'):
                         camera_read = True
                         exist_cam = True
@@ -638,7 +627,7 @@ class analysis:
                         t_DBSCAN_2 = time.perf_counter()
                         if self.options.debug_mode == 1:
                             print(f"1. DBSCAN run + variables calculation in {t_DBSCAN_2 - t_DBSCAN_1:0.4f} seconds")
-                        self.autotree.fillCameraVariables(img_fr_zs,timestamp)
+                        self.autotree.fillCameraVariables(img_fr_zs)
                         t_DBSCAN_3 = time.perf_counter()
                         if self.options.debug_mode == 1:
                             print(f"fillCameraVariables in {t_DBSCAN_3 - t_DBSCAN_2:0.4f} seconds")
@@ -892,10 +881,12 @@ if __name__ == '__main__':
             postfix = 'mid.gz'
         options.tmpname = "%s/%s%05d.%s" % (tmpdir,prefix,int(options.run),postfix)
     else:
-        if options.rawdata_tier == 'root' or options.rawdata_tier == 'h5':
+        if options.rawdata_tier == 'root': 
             file_url = sw.swift_root_file(options.tag, int(options.run))
             print ('Downloading file: ' + file_url)
             options.tmpname = sw.swift_download_root_file(file_url,int(options.run),tmpdir)
+        if options.rawdata_tier == 'h5':
+            options.tmpname = ("%s/histograms_Run%05d.h5" % (tmpdir,int(options.run))) 
         else:
             print ('Downloading MIDAS.gz file for run ' + options.run)
     # in case of MIDAS, download function checks the existence and in case it is absent, downloads it. If present, opens it
