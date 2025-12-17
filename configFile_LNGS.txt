@@ -35,6 +35,44 @@
 'min_neighbors_average' : 1.2,                   # cut on the minimum average energy around a pixel (remove isolated macro-pixels)
 'cimax'                 : 5000,                    # Upper threshold (keep very high not to kill large signals)
 'justPedestal'          : False,
+{
+# DATA FORMAT
+'rawdata_tier' : 'root',
+
+# DETECTOR
+'geometry'  : 'lime',
+
+# DEBUG plots
+'debug_mode'            : 0,
+'ev'                    : 10,
+'nclu'                  : -1,        # -1
+
+# Plots that will be made if debug_mode = 1
+
+'flag_full_image'       : 1,
+'flag_rebin_image'      : 1,
+'flag_edges_image'      : 0,
+'flag_polycluster'      : 1,
+'flag_dbscan_seeds'     : 1,
+'flag_stats'            : 0,
+'pkl_ext'		: 0,
+
+'camera_mode'            : 1,
+
+# Parameters of the plots
+'cmapcolor'             : 'gray',
+'figsizeY'              : 12,
+'figsizeX'              : 12,
+
+# Setting environments parameters
+
+'offline'               : False,		#if False it reads the logbook from online, if true it reads the runlog_tag_auto.csv locally
+'rebin'                 : 4,
+'nsigma'                : 0.6,
+'min_neighbors_average' : 1.2,                   # cut on the minimum average energy around a pixel (remove isolated macro-pixels)
+'cimax'                 : 5000,                    # Upper threshold (keep very high not to kill large signals)
+'justPedestal'          : False,
+'zeroped'               : False,                  # used only for SIM special cases. Always "False" in data
 'daq'                   : 'midas',                 # DAQ type (btf/h5/midas)
 'tag'                   : 'LNGS',                  # 'LNGS' for LIME LNGS experimental data, 'LNF' for all data taken at LNF, 'MAN' for all data taken at LNGS MANGO, 'MC$path_to_histogram.root' for MC. 
 						   # An example for MC tag could be (see configFile_MC.txt) 'MC$digitized/LIME_08_keV_Sat_NewCode_Iso_RandZ' (do not include the bucket nor the file name) 
