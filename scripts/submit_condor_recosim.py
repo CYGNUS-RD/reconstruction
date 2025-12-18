@@ -9,9 +9,13 @@ set -e
 
 # Experiment executable config
 export CVMFS_PARENT_DIR=""
+export PATH=$CVMFS_PARENT_DIR/cvmfs/sft-cygno.infn.it/script:$PATH
+export PYTHONPATH="${PYTHONPATH}:$CVMFS_PARENT_DIR/cvmfs/sft-cygno.infn.it/packages/py/Ubuntu22.04_Py3.11.9/"
 source /cvmfs/sft.cern.ch/lcg/views/LCG_105/x86_64-ubuntu2204-gcc11-opt/setup.sh
 source /cvmfs/sft-cygno.infn.it/config/setup_digi.sh
-chmod a+x reconstruction.py
+if [ ! -L /usr/include/numpy ]; then
+  ln -s $CVMFS_PARENT_DIR/cvmfs/sft.cern.ch/lcg/views/LCG_105/x86_64-ubuntu2204-gcc11-opt/lib/python3.9/site-packages/numpy/core/include/numpy/ /usr/include/numpy
+fi
 COMMAND
 '''
 
@@ -42,9 +46,9 @@ preserve_relative_paths = True
            ld=os.path.abspath(logdir),
            cpu=options.threads, user=os.environ['USERNAME'], here=os.environ['PWD'] ) )
     for i,rf in enumerate(rootfiles):
-        condor_file.write(f'transfer_input_files = {rf} \n')
+        condor_file.write(f'transfer_input_files = {rf},{os.environ["PWD"]}/\n') # "trailing / is impoprtant: in this way the content of the dir is transferred, the dir itself not
         condor_file.write(f'transfer_output_files = reco_run{runs[i]:05d}_3D.root,reco_run{runs[i]:05d}_3D.txt\n')
-        condor_file.write(f'transfer_output_remaps = "reco_run{runs[i]:05d}_3D.root = {outdirs[i]}/reco_run{runs[i]:05d}_3D.root,reco_run{runs[i]:05d}_3D.txt = {outdirs[i]}/reco_run{runs[i]:05d}_3D.txt"\n')
+        condor_file.write(f'transfer_output_remaps = "reco_run{runs[i]:05d}_3D.root = {outdirs[i]}/reco_run{runs[i]:05d}_3D.root;reco_run{runs[i]:05d}_3D.txt = {outdirs[i]}/reco_run{runs[i]:05d}_3D.txt"\n')
         condor_file.write(f'arguments = {srcfiles[i]} \nqueue \n\n')
         
     condor_file.close()
@@ -91,14 +95,14 @@ if __name__ == "__main__":
     print("List of input files done. Now creating the jobs")
 
     rootfiles,outdirs,runs,srcfiles = [],[],[],[]
-    for dirs,f in files:
+    for j,(dirs,f) in enumerate(files):
         outdir = '/'.join([args.outdir]+[d for d in dirs])
         print("outdir will be ",outdir)
         os.system(f'mkdir -m 777 -p {outdir}')
         inputfile = '/'.join([args.inputdir]+[d for d in dirs]+[f])
         run = int(re.search(r'\d+', f).group())
 
-        print(f"Creating job for run: {run} to be saved in {outdir}\n")
+        print(f"Creating job #{j} for run: {run} to be saved in {outdir}\n")
 
         job_file_name = outdir+"/reco.sh"
         tmp_file = open(job_file_name, 'w')
@@ -115,8 +119,9 @@ if __name__ == "__main__":
         runs.append(run)
 
     cf = makeCondorFile(rootfiles,outdirs,runs,srcfiles,logdir,args)
-    subcmd = f'source $CVMFS_PARENT_DIR/cvmfs/sft-cygno.infn.it/config/cygno_htc -s {cf} {args.ce}'
-    
+    subcmd = f'cygno_htc -s {cf} {args.ce}'
+
+    print (f"To submit the {j} jobs run the command: {subcmd}")
     print ("DONE")
 
         
