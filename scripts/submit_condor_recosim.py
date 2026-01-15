@@ -82,10 +82,17 @@ if __name__ == "__main__":
     parser.add_argument("-o", "--outdir", type=str, default="./", help='output directory');
     parser.add_argument("-c", "--ce", type=int, default=2, help="Computing element in condor to use")
     parser.add_argument("-t", "--threads", type=int, default=1, help="Number of CPUs to request")
+    parser.add_argument("-d", "--dryrun", action="store_true", help="do not submit jobs for real, only prepare the scripts")
+    parser.add_argument("-j", "--jobrange", nargs=2, type=int, metavar=("jobmin","jobmax"), help="range di job da sottomettere")
     args = parser.parse_args()
 
     print("SUBMIT RECO")
     absopath  = os.path.abspath(args.outdir)
+
+    jmin=0; jmax=1e4
+    if args.jobrange:
+        jmin=args.jobrange[0]
+        jmax=args.jobrange[1]
     
     logdir = absopath+'/logs/'
     if not os.path.isdir(logdir):
@@ -96,6 +103,7 @@ if __name__ == "__main__":
 
     rootfiles,outdirs,runs,srcfiles = [],[],[],[]
     for j,(dirs,f) in enumerate(files):
+        if j<jmin or j>jmax: continue
         outdir = '/'.join([args.outdir]+[d for d in dirs])
         print("outdir will be ",outdir)
         os.system(f'mkdir -m 777 -p {outdir}')
@@ -120,8 +128,12 @@ if __name__ == "__main__":
 
     cf = makeCondorFile(rootfiles,outdirs,runs,srcfiles,logdir,args)
     subcmd = f'cygno_htc -s {cf} {args.ce}'
-
-    print (f"To submit the {j} jobs run the command: {subcmd}")
+    print(f"Scripts prepared in {absopath}") 
+    if args.dryrun:
+        print (f"To submit the {len(srcfiles)} jobs run the command: {subcmd}")
+    else:
+        print ("Submitting jobs:")
+        os.system(f"cygno_setup && {subcmd}")
     print ("DONE")
 
         
