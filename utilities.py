@@ -496,8 +496,9 @@ class utils:
         #New tree addition for numerical parameters
         treeparam = ROOT.TTree('Reco_params','Tree with parameters of the reconstruction')
         ##Camera variables
-        camera_mode = np.array(options.camera_mode,dtype='intc')
+        camera_mode = np.zeros(1, dtype=np.int32)
         treeparam.Branch('camera_mode',camera_mode,'camera_mode/I')
+        camera_mode[0] = int(options.camera_mode)
         rebin = np.array(options.rebin,dtype='intc')
         treeparam.Branch('rebin',rebin,'rebin/I')
         nsigma = np.array(options.nsigma,dtype='float32')
