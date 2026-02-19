@@ -8,7 +8,7 @@ from operator import itemgetter
 import time,math
 
 import warnings
-warnings.simplefilter('ignore', np.RankWarning)
+warnings.simplefilter('ignore', np.exceptions.RankWarning)
 
 class PolynomialRegression(object):
     def __init__(self, degree=3, coeffs=None):

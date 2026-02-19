@@ -298,7 +298,7 @@ class analysis:
                #print ("keys = ",keys)
                for i,name in enumerate(keys):
                    if 'pic' in name:
-                       patt = re.compile('\S+run(\d+)_ev(\d+)')
+                       patt = re.compile('\\S+run(\\d+)_ev(\\d+)')
                        m = patt.match(name)
                        run = int(m.group(1))
                        event = int(m.group(2))
@@ -348,7 +348,7 @@ class analysis:
            else:
                for i,name in enumerate(keys):
                    if 'pic' in name:
-                       patt = re.compile('\S+run(\d+)_ev(\d+)')
+                       patt = re.compile('\\S+run(\\d+)_ev(\\d+)')
                        m = patt.match(name)
                        run = int(m.group(1))
                        event = int(m.group(2))
@@ -516,7 +516,7 @@ class analysis:
 
                 if self.options.rawdata_tier == 'root':
                     if 'pic' in name:
-                        patt = re.compile('\S+run(\d+)_ev(\d+)')
+                        patt = re.compile('\\S+run(\\d+)_ev(\\d+)')
                         m = patt.match(name)
                         run = int(m.group(1))
                         event = int(m.group(2))
@@ -525,7 +525,7 @@ class analysis:
 
                 elif self.options.rawdata_tier == 'h5':
                     if 'pic' in name:
-                        patt = re.compile('\S+run(\d+)_ev(\d+)')
+                        patt = re.compile('\\S+run(\\d+)_ev(\\d+)')
                         m = patt.match(name)
                         run = int(m.group(1))
                         event = int(m.group(2))

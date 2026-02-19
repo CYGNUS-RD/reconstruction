@@ -54,10 +54,10 @@ def nred_cython(np.ndarray[DTYPE_t, ndim=2] edges, int escalax, int escalay, flo
     return edges
 
 
-def sim3d_cython(np.ndarray[np.int_t, ndim=2] img_rb_zs, np.ndarray[np.int_t, ndim=2] points):
+def sim3d_cython(np.ndarray[np.int, ndim=2] img_rb_zs, np.ndarray[np.int, ndim=2] points):
     cdef int size = points.shape[0]
     cdef int k, nreplicas=0
-    cdef np.int_t j,l,idx1=0,idx2=0
+    cdef np.int j,l,idx1=0,idx2=0
     for k in range(size):
         j = points[k,0]
         l = points[k,1]
