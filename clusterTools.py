@@ -148,9 +148,13 @@ class Cluster:
         mat = np.array([self.x,self.y])
         covmat = np.cov(mat.astype(float))
         eig_values, eig_vecs = np.linalg.eig(covmat)
+
         indexes = (np.argmax(eig_values),np.argmin(eig_values))
-        eig_vec_vals = (eig_vecs[:, indexes[0]], eig_vecs[:, indexes[-1]])
-        theta = np.degrees(np.arctan2(*eig_vecs[:,0][::-1]))
+        major_vec = eig_vecs[:, indexes[0]]
+        minor_vec = eig_vecs[:, indexes[-1]]
+        eig_vec_vals = (major_vec, minor_vec)
+        
+        theta = np.degrees(np.arctan2(major_vec[1], major_vec[0])) % 180
         return eig_vec_vals,theta
 
     def plotAxes(self,plot):
