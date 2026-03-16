@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-import os, sys, re
+import os, sys, re, math, glob
 from pathlib import Path
 
 jobstring  = '''#!/bin/bash
@@ -16,16 +16,20 @@ source /cvmfs/sft-cygno.infn.it/config/setup_digi.sh
 if [ ! -L /usr/include/numpy ]; then
   ln -s $CVMFS_PARENT_DIR/cvmfs/sft.cern.ch/lcg/views/LCG_105/x86_64-ubuntu2204-gcc11-opt/lib/python3.9/site-packages/numpy/core/include/numpy/ /usr/include/numpy
 fi
+cd $_CONDOR_SCRATCH_DIR
 COMMAND
 '''
 
-def makeCondorFile(rootfiles,outdirs,runs,srcfiles,logdir,options):
+def makeCondorFile(rootfiles,outdirs,runs,srcfiles,logdir,options,batchn=None):
     dummy_exec = open(options.outdir+'/dummy_exec.sh','w')
     dummy_exec.write('#!/bin/bash\n')
     dummy_exec.write('bash $*\n')
     dummy_exec.close()
 
-    condor_file_name = options.outdir+'/condor_submit.condor'
+    if not batchn:
+        condor_file_name = options.outdir+'/condor_submit.condor'
+    else:
+        condor_file_name = f"{options.outdir}/condor_submit_{batchn}.condor"
     condor_file = open(condor_file_name,'w')
     condor_file.write('''+SingularityImage = "/cvmfs/sft-cygno.infn.it/dockers/images/cygno-wn_v2.4.sif"
 +SingularityBind = "/cvmfs/:/cvmfs/"
@@ -37,26 +41,25 @@ Output     = {ld}/$(ProcId).out
 Error      = {ld}/$(ProcId).error
 getenv      = True
 next_job_start_delay = 1
-environment = "LS_SUBCWD={here}"
 request_cpus = {cpu}
 should_transfer_files   = YES
 preserve_relative_paths = True
 +CygnoUser = "{user}"\n
 '''.format(de=dummy_exec.name,
            ld=os.path.abspath(logdir),
-           cpu=options.threads, user=os.environ['USERNAME'], here=os.environ['PWD'] ) )
+           cpu=options.threads, user=os.environ['USERNAME'], here=options.outdir ) )
     for i,rf in enumerate(rootfiles):
-        condor_file.write(f'transfer_input_files = {rf},{os.environ["PWD"]}/\n') # "trailing / is impoprtant: in this way the content of the dir is transferred, the dir itself not
+        condor_file.write(f'transfer_input_files = {rf},{os.environ["PWD"]}/,{os.path.abspath(srcfiles[i])}\n') # "trailing / is impoprtant: in this way the content of the dir is transferred, the dir itself not
         condor_file.write(f'transfer_output_files = reco_run{runs[i]:05d}_3D.root,reco_run{runs[i]:05d}_3D.txt\n')
         condor_file.write(f'transfer_output_remaps = "reco_run{runs[i]:05d}_3D.root = {outdirs[i]}/reco_run{runs[i]:05d}_3D.root;reco_run{runs[i]:05d}_3D.txt = {outdirs[i]}/reco_run{runs[i]:05d}_3D.txt"\n')
-        condor_file.write(f'arguments = {srcfiles[i]} \nqueue \n\n')
+        condor_file.write(f'arguments = {os.path.basename(srcfiles[i])} \nqueue \n\n')
         
     condor_file.close()
     return condor_file_name
 
 
 def find_files_with_dirs(root_dir, extension):
-    print("Navigating into ",root_dir," tp find ",extension," files. It can take time...")
+    print("Navigating into ",root_dir," to find ",extension," files. It can take time...")
     root_dir = Path(root_dir).resolve()
     extension = extension if extension.startswith('.') else f'.{extension}'
     
@@ -71,6 +74,14 @@ def find_files_with_dirs(root_dir, extension):
         
     return results
 
+def print_submission_cmd(condordir):
+    condor_files = sorted(glob.glob(f"{condordir}/*.condor"))
+    script_name = f"{condordir}/submit_all.sh"
+    with open(script_name, "w") as f:
+        f.write("#!/bin/bash\n\n")
+        for file in condor_files:
+            f.write(f"cygno_htc -s {file} 2\n")
+    print(f"Submit {len(condor_files)} clusters with the script {script_name}.")
 
 
 
@@ -84,6 +95,7 @@ if __name__ == "__main__":
     parser.add_argument("-t", "--threads", type=int, default=1, help="Number of CPUs to request")
     parser.add_argument("-d", "--dryrun", action="store_true", help="do not submit jobs for real, only prepare the scripts")
     parser.add_argument("-j", "--jobrange", nargs=2, type=int, metavar=("jobmin","jobmax"), help="range di job da sottomettere")
+    parser.add_argument("-b", "--batchsize", type=int, default=None, help="divide each cluster of jobs in batch of the size batch-size")
     args = parser.parse_args()
 
     print("SUBMIT RECO")
@@ -126,14 +138,28 @@ if __name__ == "__main__":
         outdirs.append(outdir)
         runs.append(run)
 
-    cf = makeCondorFile(rootfiles,outdirs,runs,srcfiles,logdir,args)
-    subcmd = f'cygno_htc -s {cf} {args.ce}'
-    print(f"Scripts prepared in {absopath}") 
-    if args.dryrun:
-        print (f"To submit the {len(srcfiles)} jobs run the command: {subcmd}")
+    if not args.batchsize:
+        cf = makeCondorFile(rootfiles,outdirs,runs,srcfiles,logdir,args)
+        subcmd = f'cygno_htc -s {cf} {args.ce}'
+        print(f"Scripts prepared in {absopath}") 
+        if args.dryrun:
+            print (f"To submit the {len(srcfiles)} jobs run the command: {subcmd}")
+        else:
+            print ("Submitting jobs:")
+            os.system(f"cygno_setup && {subcmd}")
     else:
-        print ("Submitting jobs:")
-        os.system(f"cygno_setup && {subcmd}")
+        chunk = args.batchsize
+        chunks = [
+                (rootfiles[i:i+chunk],
+                 outdirs[i:i+chunk],
+                 runs[i:i+chunk],
+                 srcfiles[i:i+chunk])
+                for i in range(0, len(rootfiles), chunk)
+        ]
+        for i, (rf, od, rn, sf) in enumerate(chunks, 1):
+                print(f"Chunk {i}")
+                cf = makeCondorFile(rf,od,rn,sf,logdir,args,i)
+        print_submission_cmd(args.outdir)
     print ("DONE")
 
         
