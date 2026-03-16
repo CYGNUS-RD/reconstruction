@@ -74,13 +74,13 @@ def find_files_with_dirs(root_dir, extension):
         
     return results
 
-def print_submission_cmd(condordir):
+def print_submission_cmd(condordir,ce):
     condor_files = sorted(glob.glob(f"{condordir}/*.condor"))
     script_name = f"{condordir}/submit_all.sh"
     with open(script_name, "w") as f:
         f.write("#!/bin/bash\n\n")
         for file in condor_files:
-            f.write(f"cygno_htc -s {file} 2\n")
+            f.write(f"cygno_htc -s {file} {ce}\n")
     print(f"Submit {len(condor_files)} clusters with the script {script_name}.")
 
 
@@ -159,7 +159,7 @@ if __name__ == "__main__":
         for i, (rf, od, rn, sf) in enumerate(chunks, 1):
                 print(f"Chunk {i}")
                 cf = makeCondorFile(rf,od,rn,sf,logdir,args,i)
-        print_submission_cmd(args.outdir)
+        print_submission_cmd(args.outdir,args.ce)
     print ("DONE")
 
         
