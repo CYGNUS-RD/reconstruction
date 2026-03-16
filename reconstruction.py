@@ -254,7 +254,7 @@ class analysis:
            if options.rawdata_tier == 'root' or options.rawdata_tier == 'h5':
                tmpdir = '{tmpdir}'.format(tmpdir=options.tmpdir if options.tmpdir else "/tmp/")
                if not sw.checkfiletmp(int(options.pedrun),'root',tmpdir):
-                   print ('Downloading file: ' + sw.swift_root_file(options.tag, int(options.pedrun)))
+                   print ('Downloading file: ' + sw.swift_root_file(options.tag, int(options.pedrun)) + 'into ' + tmpdir)
                    pedfilename = sw.swift_download_root_file(sw.swift_root_file(options.tag, int(options.pedrun)),int(options.pedrun),tmpdir)
                else:
                    pedfilename = sw.swift_download_root_file(sw.swift_root_file(options.tag, int(options.pedrun)),int(options.pedrun),tmp=tmpdir,justName=True)                
@@ -298,7 +298,7 @@ class analysis:
                #print ("keys = ",keys)
                for i,name in enumerate(keys):
                    if 'pic' in name:
-                       patt = re.compile('\S+run(\d+)_ev(\d+)')
+                       patt = re.compile('\\S+run(\\d+)_ev(\\d+)')
                        m = patt.match(name)
                        run = int(m.group(1))
                        event = int(m.group(2))
@@ -348,7 +348,7 @@ class analysis:
            else:
                for i,name in enumerate(keys):
                    if 'pic' in name:
-                       patt = re.compile('\S+run(\d+)_ev(\d+)')
+                       patt = re.compile('\\S+run(\\d+)_ev(\\d+)')
                        m = patt.match(name)
                        run = int(m.group(1))
                        event = int(m.group(2))
@@ -369,7 +369,6 @@ class analysis:
 
         else:
                 print("===> PEDESTAL IS DUMMY: 0 MEAN AND 0 RMS (typically for simulated events")
-        print ("BUUUUHHH")
 
         # now save in a persistent ROOT object
         # the inversion of x and y from array to histogram is correct: [row][columns] to x,y
@@ -516,7 +515,7 @@ class analysis:
 
                 if self.options.rawdata_tier == 'root':
                     if 'pic' in name:
-                        patt = re.compile('\S+run(\d+)_ev(\d+)')
+                        patt = re.compile('\\S+run(\\d+)_ev(\\d+)')
                         m = patt.match(name)
                         run = int(m.group(1))
                         event = int(m.group(2))
@@ -525,7 +524,7 @@ class analysis:
 
                 elif self.options.rawdata_tier == 'h5':
                     if 'pic' in name:
-                        patt = re.compile('\S+run(\d+)_ev(\d+)')
+                        patt = re.compile('\\S+run(\\d+)_ev(\\d+)')
                         m = patt.match(name)
                         run = int(m.group(1))
                         event = int(m.group(2))
