@@ -239,7 +239,8 @@ class analysis:
         rebin = self.rebin if alternativeRebin<0 else alternativeRebin
         nx=int(nx/rebin); ny=int(ny/rebin); 
         pedfilename = 'pedestals/pedmap_run%s_rebin%d.root' % (options.pedrun,rebin)
-        
+        os.makedirs('pedestals', exist_ok=True)
+
         pedfile = ROOT.TFile.Open(pedfilename,'recreate')
         pedmap = ROOT.TH2D('pedmap','pedmap',nx,0,self.xmax,ny,0,self.ymax)
         pedmapS = ROOT.TH2D('pedmapsigma','pedmapsigma',nx,0,self.xmax,ny,0,self.ymax)
