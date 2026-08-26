@@ -19,8 +19,23 @@ if [ ! -L /usr/include/numpy ]; then
    ln -s $CVMFS_PARENT_DIR/cvmfs/sft.cern.ch/lcg/views/LCG_105/x86_64-ubuntu2204-gcc11-opt/lib/python3.9/site-packages/numpy/core/include/numpy/ /usr/include/numpy
    echo "numpy link necessary. Done."
 fi
+echo "Untar the code:"
+tar xzvf code.tgz
+mkdir plots
 echo "setup done, now the main program:"
 '''
+
+def makeCodeTgz(recodir):
+    filesToTransfer = [str(f) for f in Path(recodir).glob(f"*.py")]
+    filesToTransfer.extend([str(f) for f in Path(recodir).glob(f"*.txt")])
+    filesToTransfer = [os.path.basename(f) for f in filesToTransfer]
+    filesToTransfer.extend(["cython_cygno.pyx","cythonize.sh","cython_cygno.c","cython_cygno.cpython-39-x86_64-linux-gnu.so"])
+    pedestal_files = [str(p.relative_to(recodir)) for p in (Path(recodir) / "pedestals").glob("*.txt")]
+    filesToTransfer.extend(pedestal_files)
+    
+    dirsToTransfer = ["data","debug_code","cluster","__pycache__","modules_config"]
+    print(f"Making a tar.gz file to transfer only the necessary files: {filesToTransfer} and directories: {dirsToTransfer}...")
+    os.system(f"tar -czf code.tgz -C {recodir} {' '.join(filesToTransfer)} {' '.join(dirsToTransfer)}")
 
 def makeInputList(fileswithdir,inputdir):
     wget_cmds = []
@@ -75,7 +90,7 @@ preserve_relative_paths = True
         srcdir = Path(src).parent
         json_string = ', '.join([str(f) for f in Path(srcdir).glob("*.json")])
         print(f"isrcfile = {i}, src={src}")
-        condor_file.write(f'transfer_input_files = {os.environ["PWD"]}/, {os.path.abspath(src)}, /cvmfs/sft-cygno.infn.it/config/lib/s3upload_put.py, {json_string}\n') # "trailing / is impoprtant: in this way the content of the dir is transferred, the dir itself not
+        condor_file.write(f'transfer_input_files = code.tgz, {os.path.abspath(src)}, /cvmfs/sft-cygno.infn.it/config/lib/s3upload_put.py, {json_string}\n') # "trailing / is impoprtant: in this way the content of the dir is transferred, the dir itself not
         condor_file.write(f'arguments = {os.path.basename(src)} \nqueue \n\n')
     condor_file.close()
 
@@ -131,6 +146,8 @@ if __name__ == "__main__":
     jobdir = absopath+'/jobs/'
     if not os.path.isdir(jobdir):
         os.system('mkdir -m 777 -p {od}'.format(od=jobdir))
+
+    makeCodeTgz(os.environ["PWD"])
     
     files = find_files_with_dirs(args.inputdir,".root")
     wgets = makeInputList(files,args.inputdir)
