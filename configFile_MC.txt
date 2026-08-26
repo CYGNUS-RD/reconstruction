@@ -35,12 +35,13 @@
 'min_neighbors_average' : 1.2,                   # cut on the minimum average energy around a pixel (remove isolated macro-pixels)
 'cimax'                 : 5000,                    # Upper threshold (keep very high not to kill large signals)
 'justPedestal'          : False,
-'zeroped'               : True,                  # if True, use a pedestal with 0 mean / 0 RMS (bare sim)
+'zeroped'               : False,                  # if True, use a pedestal with 0 mean / 0 RMS (bare sim)
 'daq'                   : 'midas',                 # DAQ type (btf/h5/midas)
-'tag'                   : 'MC$digitized/LIME_08_keV_Sat_NewCode_Iso_RandZ',          # 'LNGS' for LIME LNGS experimental data, 'LNF' for all data taken at LNF, 'MAN' for all data taken at LNGS 										
+'tag'                   : 'LNGS',          # 'LNGS' for LIME LNGS experimental data, 'LNF' for all data taken at LNF, 'MAN' for all data taken at LNGS 										
 										     # MANGO, 'MC$path_to_histogram.root' for MC. 
 				  						     # An example for MC tag could be (see configFile_MC.txt) 'MC$digitized/LIME_08_keV_Sat_NewCode_Iso_RandZ' (do not 
 				  						     # include the bucket nor the file name) 
+'pedrun'          : 94564,                   # for MC, use always the same pedestal (must be compatible with the digitization)
 'vignetteCorr'          : True,                    # apply vignetting correction (correction maps in data/ according to the geometry)
 'environment_variables' : False,                    # if True the environment variables are added to the Tree
 

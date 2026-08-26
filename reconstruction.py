@@ -251,7 +251,7 @@ class analysis:
         pedrms = np.zeros((ny,nx))
 
         if not options.zeroped:
-           if options.rawdata_tier == 'root' or options.rawdata_tier == 'h5':
+           if (options.rawdata_tier == 'root' or options.rawdata_tier == 'h5') and options.pedrun==1:
                tmpdir = '{tmpdir}'.format(tmpdir=options.tmpdir if options.tmpdir else "/tmp/")
                if not sw.checkfiletmp(int(options.pedrun),'root',tmpdir):
                    print ('Downloading file: ' + sw.swift_root_file(options.tag, int(options.pedrun)) + 'into ' + tmpdir)
@@ -262,15 +262,14 @@ class analysis:
                keys = tf.keys()
                mf = [0] # dummy array to make a common loop with MIDAS case
            else:
-               sigrun,tmpdir,tag = self.tmpname
-               mf = sw.swift_download_midas_file(options.pedrun,tmpdir,tag)
+               mf = sw.swift_download_midas_file(int(options.pedrun),'/tmp',options.tag)
                #mf = self.tmpname
 
         if not options.zeroped:
 
            # first calculate the mean 
            numev = 0
-           if  options.rawdata_tier == 'midas':
+           if  options.rawdata_tier == 'midas' or options.pedrun>1:
                mf.jump_to_start()
                for mevent in mf:
                    if mevent.header.is_midas_internal_event():
@@ -960,7 +959,7 @@ if __name__ == '__main__':
     if options.debug_mode == 1: print('DEBUG mode activated. Only event',options.ev,'will be analysed')
     # FIX: the option for saving plots should only be ON only if camera mode is ON
     print("I Will save plots to ",options.plotDir)
-    os.system('cp utils/index.php {od}'.format(od=options.plotDir))
+    #os.system('cp utils/index.php {od}'.format(od=options.plotDir))
     os.system('mkdir -p {pdir}'.format(pdir=options.plotDir))
     
     nThreads = 1
