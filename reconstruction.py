@@ -262,7 +262,7 @@ class analysis:
                keys = tf.keys()
                mf = [0] # dummy array to make a common loop with MIDAS case
            else:
-               mf = sw.swift_download_midas_file(int(options.pedrun),'/tmp',options.tag)
+               mf = sw.swift_download_midas_file(int(options.pedrun),'/tmp/',options.tag)
                #mf = self.tmpname
 
         if not options.zeroped:
