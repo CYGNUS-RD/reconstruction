@@ -85,7 +85,7 @@ class SnakesFactory:
         image_fr_vignetted = self.ct.vignette_corr(self.image_fr,self.vignette)
         image_fr_zs_vignetted = self.ct.vignette_corr(self.image_fr_zs,self.vignette)    
         if tip=='3D':
-            sample_weight = np.take(self.image, self.image.shape[0]*points[:,0]+points[:,1]).astype(int)
+            sample_weight = self.image[points[:,0], points[:,1]].astype(int)
             sample_weight[sample_weight==0] = 1
             X = points.copy()
             save_arr = False
