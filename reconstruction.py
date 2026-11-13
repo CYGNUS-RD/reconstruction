@@ -245,120 +245,127 @@ class analysis:
         pedmapS = ROOT.TH2D('pedmapsigma','pedmapsigma',nx,0,self.xmax,ny,0,self.ymax)
 
         pedsum = np.zeros((ny,nx))
+        pedmean = np.zeros((ny,nx))
+        pedrms = np.zeros((ny,nx))
 
-        if options.rawdata_tier == 'root' or options.rawdata_tier == 'h5':
-            tmpdir = '{tmpdir}'.format(tmpdir=options.tmpdir if options.tmpdir else "/tmp/")
-            if not sw.checkfiletmp(int(options.pedrun),'root',tmpdir):
-                print ('Downloading file: ' + sw.swift_root_file(options.tag, int(options.pedrun)))
-                pedfilename = sw.swift_download_root_file(sw.swift_root_file(options.tag, int(options.pedrun)),int(options.pedrun),tmpdir)
-            else:
-                pedfilename = sw.swift_download_root_file(sw.swift_root_file(options.tag, int(options.pedrun)),int(options.pedrun),tmp=tmpdir,justName=True)                
-            tf = sw.swift_read_root_file(pedfilename)
-            keys = tf.keys()
-            mf = [0] # dummy array to make a common loop with MIDAS case
-        else:
-            sigrun,tmpdir,tag = self.tmpname
-            mf = sw.swift_download_midas_file(options.pedrun,tmpdir,tag)
-            #mf = self.tmpname
+        if not options.zeroped:
+           if (options.rawdata_tier == 'root' or options.rawdata_tier == 'h5') and options.pedrun==1:
+               tmpdir = '{tmpdir}'.format(tmpdir=options.tmpdir if options.tmpdir else "/tmp/")
+               if not sw.checkfiletmp(int(options.pedrun),'root',tmpdir):
+                   print ('Downloading file: ' + sw.swift_root_file(options.tag, int(options.pedrun)) + 'into ' + tmpdir)
+                   pedfilename = sw.swift_download_root_file(sw.swift_root_file(options.tag, int(options.pedrun)),int(options.pedrun),tmpdir)
+               else:
+                   pedfilename = sw.swift_download_root_file(sw.swift_root_file(options.tag, int(options.pedrun)),int(options.pedrun),tmp=tmpdir,justName=True)                
+               tf = sw.swift_read_root_file(pedfilename)
+               keys = tf.keys()
+               mf = [0] # dummy array to make a common loop with MIDAS case
+           else:
+               mf = sw.swift_download_midas_file(int(options.pedrun),'/tmp/',options.tag)
+               #mf = self.tmpname
 
-        # first calculate the mean 
-        numev = 0
-        if  options.rawdata_tier == 'midas':
-            mf.jump_to_start()
-            for mevent in mf:
-                if mevent.header.is_midas_internal_event():
-                    continue
-                else:
-                    keys = mevent.banks.keys()
-                for iobj,key in enumerate(keys):
-                    name=key
-                    if name.startswith('CAM'):
-                        justSkip=False
-                        if (numev in self.options.excImages) and self.options.justPedestal: justSkip=True
-                        if (maxImages>-1 and numev>min(len(keys),maxImages)) and self.options.justPedestal: break
-                        if numev>250: break # no need to compute pedestals with >250 evts
-                            
-                        if numev%20 == 0:
-                            print("Calc pedestal mean with event: ",numev)
-                        numev += 1
-                        if justSkip:
-                            continue
-                        arr,_,_ = cy.daq_cam2array(mevent.banks[key])
-                        if rebin>1:
-                            ctools.arrrebin(arr,rebin)
-                        pedsum = np.add(pedsum,arr)
-        else:
-            #print ("keys = ",keys)
-            for i,name in enumerate(keys):
-                if 'pic' in name:
-                    patt = re.compile('\S+run(\d+)_ev(\d+)')
-                    m = patt.match(name)
-                    run = int(m.group(1))
-                    event = int(m.group(2))
-                    justSkip=False
-                    if (numev in self.options.excImages) and self.options.justPedestal: justSkip=True
-                    if (maxImages>-1 and numev>min(len(keys),maxImages)) and self.options.justPedestal: break
-                    if numev>250: break # no need to compute pedestals with >250 evts
+        if not options.zeroped:
 
-                    if event%20 == 0:
-                        print("Calc pedestal mean with event: ",event)
-                    numev += 1
-                    if justSkip:
-                        continue
-                    arr = utilities.rootflip(tf,name,options.tag)                    #necessary to uniform root raw data to midas. This is a vertical flip (raw data differ between ROOT and MIDAS formats)
-                    pedsum = np.add(pedsum,arr)
-
-        pedmean = pedsum / float(numev)
-
-        # now compute the rms (two separate loops is faster than one, yes)
-        pedsqdiff = np.zeros((ny,nx))
-        numev = 0
-        if  options.rawdata_tier == 'midas':
-            mf.jump_to_start()
-            for mevent in mf:
-                if mevent.header.is_midas_internal_event():
-                    continue
-                else:
-                    keys = mevent.banks.keys()
-                for iobj,key in enumerate(keys):
-                    name=key
-                    if name.startswith('CAM'):
-                        justSkip=False
-                        if (numev in self.options.excImages) and self.options.justPedestal: justSkip=True
-                        if (maxImages>-1 and numev>min(len(keys),maxImages)) and self.options.justPedestal: break
-                        if numev>250: break # no need to compute pedestals with >250 evts 
-             
-                        if numev%20 == 0:
-                            print("Calc pedestal rms with event: ",numev)
-                        numev += 1
-                        if justSkip:
-                             continue
-
-                        arr,_,_ = cy.daq_cam2array(mevent.banks[key])
-                        if rebin>1:
-                            ctools.arrrebin(arr,rebin)
-                        pedsqdiff = np.add(pedsqdiff, np.square(np.add(arr,-1*pedmean)))
-        else:
-            for i,name in enumerate(keys):
-                if 'pic' in name:
-                    patt = re.compile('\S+run(\d+)_ev(\d+)')
-                    m = patt.match(name)
-                    run = int(m.group(1))
-                    event = int(m.group(2))
-                    justSkip=False
-                    if (numev in self.options.excImages) and self.options.justPedestal: justSkip=True
-                    if (maxImages>-1 and numev>min(len(keys),maxImages)) and self.options.justPedestal: break
-                    if numev>250: break # no need to compute pedestals with >250 evts
-                    if justSkip:
-                     continue
-
-                    if event%20 == 0:
-                        print("Calc pedestal rms with event: ",event)
-                    numev += 1
-                    arr = utilities.rootflip(tf,name,options.tag)                     #see cycle above on pedmean
-                    pedsqdiff = np.add(pedsqdiff, np.square(np.add(arr,-1*pedmean)))
+           # first calculate the mean 
+           numev = 0
+           if  options.rawdata_tier == 'midas' or options.pedrun>1:
+               mf.jump_to_start()
+               for mevent in mf:
+                   if mevent.header.is_midas_internal_event():
+                       continue
+                   else:
+                       keys = mevent.banks.keys()
+                   for iobj,key in enumerate(keys):
+                       name=key
+                       if name.startswith('CAM'):
+                           justSkip=False
+                           if (numev in self.options.excImages) and self.options.justPedestal: justSkip=True
+                           if (maxImages>-1 and numev>min(len(keys),maxImages)) and self.options.justPedestal: break
+                           if numev>250: break # no need to compute pedestals with >250 evts
+                               
+                           if numev%20 == 0:
+                               print("Calc pedestal mean with event: ",numev)
+                           numev += 1
+                           if justSkip:
+                               continue
+                           arr,_,_ = cy.daq_cam2array(mevent.banks[key])
+                           if rebin>1:
+                               ctools.arrrebin(arr,rebin)
+                           pedsum = np.add(pedsum,arr)
+           else:
+               #print ("keys = ",keys)
+               for i,name in enumerate(keys):
+                   if 'pic' in name:
+                       patt = re.compile('\\S+run(\\d+)_ev(\\d+)')
+                       m = patt.match(name)
+                       run = int(m.group(1))
+                       event = int(m.group(2))
+                       justSkip=False
+                       if (numev in self.options.excImages) and self.options.justPedestal: justSkip=True
+                       if (maxImages>-1 and numev>min(len(keys),maxImages)) and self.options.justPedestal: break
+                       if numev>250: break # no need to compute pedestals with >250 evts
+    
+                       if event%20 == 0:
+                           print("Calc pedestal mean with event: ",event)
+                       numev += 1
+                       if justSkip:
+                           continue
+                       arr = utilities.rootflip(tf,name,options.tag)                    #necessary to uniform root raw data to midas. This is a vertical flip (raw data differ between ROOT and MIDAS formats)
+                       pedsum = np.add(pedsum,arr)
+    
+           pedmean = pedsum / float(numev)
+    
+           # now compute the rms (two separate loops is faster than one, yes)
+           pedsqdiff = np.zeros((ny,nx))
+           numev = 0
+           if  options.rawdata_tier == 'midas':
+               mf.jump_to_start()
+               for mevent in mf:
+                   if mevent.header.is_midas_internal_event():
+                       continue
+                   else:
+                       keys = mevent.banks.keys()
+                   for iobj,key in enumerate(keys):
+                       name=key
+                       if name.startswith('CAM'):
+                           justSkip=False
+                           if (numev in self.options.excImages) and self.options.justPedestal: justSkip=True
+                           if (maxImages>-1 and numev>min(len(keys),maxImages)) and self.options.justPedestal: break
+                           if numev>250: break # no need to compute pedestals with >250 evts 
                 
-        pedrms = np.sqrt(pedsqdiff/float(numev-1))
+                           if numev%20 == 0:
+                               print("Calc pedestal rms with event: ",numev)
+                           numev += 1
+                           if justSkip:
+                                continue
+    
+                           arr,_,_ = cy.daq_cam2array(mevent.banks[key])
+                           if rebin>1:
+                               ctools.arrrebin(arr,rebin)
+                           pedsqdiff = np.add(pedsqdiff, np.square(np.add(arr,-1*pedmean)))
+           else:
+               for i,name in enumerate(keys):
+                   if 'pic' in name:
+                       patt = re.compile('\\S+run(\\d+)_ev(\\d+)')
+                       m = patt.match(name)
+                       run = int(m.group(1))
+                       event = int(m.group(2))
+                       justSkip=False
+                       if (numev in self.options.excImages) and self.options.justPedestal: justSkip=True
+                       if (maxImages>-1 and numev>min(len(keys),maxImages)) and self.options.justPedestal: break
+                       if numev>250: break # no need to compute pedestals with >250 evts
+                       if justSkip:
+                        continue
+    
+                       if event%20 == 0:
+                           print("Calc pedestal rms with event: ",event)
+                       numev += 1
+                       arr = utilities.rootflip(tf,name,options.tag)                     #see cycle above on pedmean
+                       pedsqdiff = np.add(pedsqdiff, np.square(np.add(arr,-1*pedmean)))
+                   
+           pedrms = np.sqrt(pedsqdiff/float(numev-1))
+
+        else:
+                print("===> PEDESTAL IS DUMMY: 0 MEAN AND 0 RMS (typically for simulated events")
 
         # now save in a persistent ROOT object
         # the inversion of x and y from array to histogram is correct: [row][columns] to x,y
@@ -531,7 +538,7 @@ class analysis:
 
                 if self.options.rawdata_tier == 'root':
                     if 'pic' in name:
-                        patt = re.compile('\S+run(\d+)_ev(\d+)')
+                        patt = re.compile('\\S+run(\\d+)_ev(\\d+)')
                         m = patt.match(name)
                         run = int(m.group(1))
                         event = int(m.group(2))
@@ -540,7 +547,7 @@ class analysis:
 
                 elif self.options.rawdata_tier == 'h5':
                     if 'pic' in name:
-                        patt = re.compile('\S+run(\d+)_ev(\d+)')
+                        patt = re.compile('\\S+run(\\d+)_ev(\\d+)')
                         m = patt.match(name)
                         run = int(m.group(1))
                         event = int(m.group(2))
@@ -968,7 +975,7 @@ if __name__ == '__main__':
     if options.debug_mode == 1: print('DEBUG mode activated. Only event',options.ev,'will be analysed')
     # FIX: the option for saving plots should only be ON only if camera mode is ON
     print("I Will save plots to ",options.plotDir)
-    os.system('cp utils/index.php {od}'.format(od=options.plotDir))
+    #os.system('cp utils/index.php {od}'.format(od=options.plotDir))
     os.system('mkdir -p {pdir}'.format(pdir=options.plotDir))
     
     nThreads = 1
